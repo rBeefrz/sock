@@ -85,6 +85,7 @@
     { id: 'delegate',  name: 'Inspiring Example',          icon: '📣', cost: 1e6,   desc: 'Each sock you finish inspires the factory to add 5% of its per-second output.', effect: { type: 'clickPct', value: 0.05 } },
     { id: 'delegate2', name: 'Very Inspiring Example',     icon: '📢', cost: 1e8,   desc: 'Each sock you finish inspires the factory to add 10% of its per-second output.', effect: { type: 'clickPct', value: 0.10 } },
     { id: 'qc',        name: 'Quality Control',            icon: '🔍', cost: 20000, desc: 'Socks sell for 25% more.',                               effect: { type: 'price', value: 1.25 } },
+    { id: 'latelicence', name: 'Late Licence',             icon: '🌙', cost: 6000,  desc: 'The shop trades after dark. Night-time foot traffic no longer drops.', effect: { type: 'night', value: 2.5 } },
     { id: 'discount',  name: 'Yarn Bulk Discount',         icon: '🧶', cost: 1e5,   desc: 'All machines cost 10% less.',                            effect: { type: 'cost', value: 0.9 } },
     { id: 'subscribe', name: 'Sock Subscription Box',      icon: '📦', cost: 2e5,   desc: 'Doubles foot traffic past your shop.',                   effect: { type: 'demand', value: 2 } },
     { id: 'branding',  name: 'Fancy Branding',             icon: '🏷️', cost: 5e5,   desc: 'Socks sell for 50% more.',                               effect: { type: 'price', value: 1.5 } },
@@ -104,8 +105,8 @@
     { id: 'plain',       name: 'Plain White Tube Sock',  icon: '🧦', price: 1,     researchCost: 0,     shop: 0, desc: 'The humble beginning.' },
     { id: 'striped',     name: 'Striped Crew Sock',      icon: '🦓', price: 3,     researchCost: 500,   shop: 0, desc: 'Now with stripes. Bold.' },
     { id: 'devil',       name: "The Devil's Sock",       icon: '😈', price: 14,    researchCost: 2500,  shop: 1, side: true, after: 'striped', outrage: 0.5,
-      warning: 'Upsets the devout. Expect a picket line.',
-      desc: 'Red, forked at the toe, and warm as you-know-where. Sells like sin. The Congregation of the Unblemished Ankle will have opinions.' },
+      warning: 'Sells like sin. Somebody will mind.',
+      desc: 'Red, forked at the toe, and warm as you-know-where. The vicar has started walking past the shop very slowly.' },
     { id: 'argyle',      name: 'Argyle Dress Sock',      icon: '🔷', price: 8,     researchCost: 5000,  shop: 1, desc: 'For the discerning ankle.' },
     { id: 'wool',        name: 'Merino Hiking Sock',     icon: '🏔️', price: 20,    researchCost: 60000, shop: 2, desc: 'Blister-proof, mostly.' },
     { id: 'compression', name: 'Compression Sock',       icon: '💪', price: 50,    researchCost: 7.5e5, shop: 2, desc: 'Medically recommended. Probably.' },
@@ -245,6 +246,12 @@
     { id: 'l_satnav',  name: 'Satnav',             icon: '🛰️', cost: 5e5,  time: 80,  requires: { factoryLevel: 3, research: ['l_training'] }, effect: { type: 'safety', value: 0.5 },   desc: 'Delivery mishaps happen half as often. Fewer pigeons consulted.' },
   ].forEach((r) => research.push(Object.assign({ category: 'logistics' }, r)));
 
+  // Shop security: a `security` effect makes trouble that has a `guarded`
+  // variant in `events` start in that softer form.
+  research.push({ id: 'r_security', name: 'Door Security', icon: '💂', category: 'shop', cost: 2500, time: 45, requires: { shopLevel: 2 },
+    effect: { type: 'security', value: 1 },
+    desc: 'Two large, polite people in black coats at the shop door. Uninvited visitors get a much shorter visit, and the bailiffs are kept talking for a minute.' });
+
   // ---- doctrines --------------------------------------------------------
   // Exclusive research: within a branch you can only ever finish one, and it
   // holds until you retire. Effects use the same types as upgrades, and may
@@ -322,6 +329,14 @@
       escalation: ['enforcer', 'mafiaGranny', 'bikers', 'takeover'],
       desc: 'No paperwork, no collateral, no questions. Sal is very understanding, right up until he is not.',
       terms: 'Miss the date and Sal will be in touch. He does not send letters.' },
+    // Laundering: the whole bag arrives as dirty cash and only `cut` of it is
+    // yours. Dirty cash washes clean as legitimate sales come in; while any
+    // is left, the police may raid (see `laundering`).
+    { id: 'launder', name: "Sal's Laundromat", icon: '🧺', requires: { shopLevel: 1 },
+      minAmount: 500, assetFraction: 1, rate: 0, cap: 1, term: 360, grace: 90, penalty: 1.25, cut: 0.2, laundering: true,
+      escalation: ['enforcer', 'mafiaGranny', 'bikers', 'takeover'],
+      desc: 'Sal has a sports bag of cash that needs to look like sock money. Keep a fifth; the rest goes back to him once it has been through the tills.',
+      terms: 'Owe Sal 80% of the bag by the date. Until an equal amount of honest sales has washed through, it is dirty money: a police raid takes what is left and closes the shop.' },
   ];
 
   // ---- trouble ----------------------------------------------------------
@@ -335,20 +350,50 @@
   const events = {
     enforcer: { icon: '🕴️', name: 'A visit from Sal', duration: 90, interest: 0.5, street: 'enforcer',
       text: 'A large man in a small hat is leaning on your doorframe. Half the customers cross the road.',
-      endText: 'The man in the small hat has gone. For now.' },
+      endText: 'The man in the small hat has gone. For now.',
+      guarded: { duration: 30, interest: 0.85,
+        text: 'A large man in a small hat came to lean on your doorframe. Security leaned back. He is sulking across the road and a few customers give him a wide berth.' } },
     mafiaGranny: { icon: '🕶️', name: 'The new granny', duration: null, skim: 0.3, factory: 'mafiaGranny',
       text: 'A granny in dark glasses started at the factory today. Nobody hired her. A third of the socks are going missing.',
       endText: 'The granny in dark glasses collected her coat and left without a word.' },
     bikers: { icon: '🏍️', name: 'Biker raid', duration: 25, traffic: 0, stealShelf: 0.5, street: 'bikers',
       text: 'A biker gang tore down the high street, scattered the customers and cleared half the shelves.',
-      endText: 'The bikers have roared off. There is glass everywhere.' },
+      endText: 'The bikers have roared off. There is glass everywhere.',
+      guarded: { duration: 12, traffic: 0.5, stealShelf: 0.1,
+        text: 'A biker gang tore down the high street. Security had the shutters down in time: a tenth of the shelves went and half the customers ran.' } },
     bailiffs: { icon: '🦺', name: 'Bailiffs', duration: 40, interest: 0.5, street: 'bailiffs',
       text: 'The bailiffs are at the shop with a clipboard and a van.',
-      endText: 'The bailiffs have driven off with a van full of your things.' },
+      endText: 'The bailiffs have driven off with a van full of your things.',
+      // With security, a first missed date buys `grace` seconds of stalling at the door before anything is seized.
+      guarded: { duration: 60, interest: 0.85, grace: 60,
+        text: 'The bailiffs are at the shop with a clipboard and a van. Security is keeping them talking at the side door. You have a minute to find the money.' } },
     picket: { icon: '✝️', name: 'Picket line', duration: 120, interest: 0.15, street: 'picket',
       text: "The Congregation of the Unblemished Ankle is picketing your door over the Devil's Sock. Almost nobody gets past them.",
       endText: 'The picket has gone home for evensong.',
       resolve: { label: 'Donate to the parish', moneyFraction: 0.25, min: 50, text: 'Your generous donation is accepted. The picket packs up, muttering.' } },
+    letdown: { icon: '📉', name: 'Word gets round', duration: 90, interest: 0.6,
+      text: 'You let {customer} down over their order. Word gets round the town and fewer people bother coming in.',
+      endText: 'People have stopped talking about the {customer} business.' },
+    // `spawn`: the event rolls itself in (live mode only) every `interval`
+    // seconds on average while `requires` hold, then rests for `cooldown`.
+    rival: { icon: '🏪', name: 'Rival shop', duration: null, traffic: 0.5, street: 'rival',
+      spawn: { interval: 480, requires: { shopLevel: 2 }, cooldown: 360 },
+      text: 'SOCKS 4 LESS has opened two doors down with a permanent sale on. Half the passers-by never reach you.',
+      endText: 'SOCKS 4 LESS has closed.',
+      resolve: { label: 'Buy them out', assetFraction: 0.35, min: 1500, growth: 1.5, text: 'You bought out SOCKS 4 LESS. Their sign is in a skip and the passers-by are yours again.' } },
+    inspector: { icon: '📋', name: 'Health inspector', duration: 60, closeFactory: true, fine: 0.15, fineMin: 50, factory: 'inspector',
+      spawn: { interval: 360, requires: { research: ['d_corners'] }, cooldown: 180 },
+      text: 'A health inspector found the corners you cut. The factory is closed for a minute of paperwork and you are fined {fine}.',
+      endText: 'The inspector has left with a report as thick as a sock drawer. The factory is open again.' },
+    vandals: { icon: '🧱', name: 'Vandals', duration: 40, interest: 0.6, stealShelf: 0.2, street: 'vandals',
+      spawn: { interval: 240, requires: { shopLevel: 3, protection: false }, cooldown: 120 },
+      text: 'A brick came through the window overnight and a fifth of the stock walked off. Sal sends his sympathies, and a reminder that insurance is available at the Bank.',
+      endText: 'The glazier has been. The window is whole again.',
+      guarded: { duration: 20, interest: 0.85, stealShelf: 0.05,
+        text: 'A brick came through the window. Security caught the lad before he reached the shelves. Sal sends his sympathies anyway.' } },
+    police: { icon: '🚔', name: 'Police raid', duration: 60, interest: 0, street: 'police',
+      text: 'The police raided the shop and found {fine} in cash that smells of Sal. They took it, and the shop is closed while they count it.',
+      endText: 'The police have gone. The shop is open again. The paperwork will take years.' },
     strike: { icon: '✊', name: 'Granny strike', duration: 120, strikeCare: 'wages', factory: 'strike',
       text: 'The grannies have downed needles. There is a picket line in the yard and a great deal of tea.',
       endText: 'The strike is over. Nobody is happy about it.',
@@ -359,6 +404,59 @@
     branches,
     lenders,
     events,
+    // Sock Radio: each track suits one kind of producer, but only when the
+    // radio drifted onto it by itself. Tune it yourself and nobody notices.
+    radio: {
+      serenades: [
+        { track: 'waltz',    care: 'wages',       mult: 1.25, start: 'A waltz has come on the radio. The grannies are humming along and the needles are flying.', end: 'The waltz has finished. The grannies sigh and settle back to their usual pace.' },
+        { track: 'chiptune', producer: 'machine', mult: 1.2,  start: 'Chiptune on the radio. The Circular Knitting Machines are spinning in time with the bleeps.', end: 'The chiptune has ended. The Circular Knitting Machines slow to their usual whirr.' },
+        { track: 'hiphop',   producer: 'loom',    mult: 1.2,  start: 'Boom bap on the radio. The Hand Looms are clacking on the beat.', end: 'The beat has stopped. The Hand Looms clack at their own pace again.' },
+        { track: 'electro',  producer: 'line',    mult: 1.2,  start: 'Four-on-the-floor on the radio. The Factory Lines are running like a dancefloor.', end: 'The electro has faded out. The Factory Lines settle back to normal speed.' },
+      ],
+    },
+    // Time of day. One day is `length` seconds of play; phase 0 is midnight
+    // and a new game starts at `offset`. Foot traffic follows it.
+    day: {
+      length: 480,
+      offset: 0.35,
+      nightTraffic: 0.4,     // traffic multiplier after dark (a `night` effect raises it, capped at 1)
+      lunchTraffic: 1.3,     // and around lunchtime
+      lunchFrom: 0.47,
+      lunchTo: 0.56,
+    },
+    // Bulk orders: a customer offers to buy `sizeSeconds` worth of demand in
+    // one go at a premium on the base price, if you deliver by the deadline.
+    orders: {
+      shopLevel: 1,
+      interval: 240,         // seconds between offers on average (live mode only)
+      offerWindow: 45,       // seconds to accept before they go elsewhere
+      deadline: 150,         // seconds to fill the order once accepted
+      sizeSeconds: 45,
+      minSocks: 20,
+      premiumMin: 1.5,
+      premiumMax: 2.5,
+      customers: [
+        { name: 'the football club', icon: '⚽' }, { name: 'the hospital', icon: '🏥' }, { name: 'a wedding party', icon: '💒' },
+        { name: 'the primary school', icon: '🏫' }, { name: 'a touring circus', icon: '🎪' }, { name: 'the fire brigade', icon: '🚒' },
+        { name: 'the rowing club', icon: '🚣' }, { name: 'a film crew', icon: '🎬' },
+      ],
+    },
+    // Sal's Neighbourhood Insurance: once the shop is big enough he offers
+    // it; paying costs `rate` of your assets per second and keeps the
+    // vandals away.
+    protection: {
+      shopLevel: 3,
+      rate: 0.00004,
+      offerText: 'Sal dropped by for a look round. "Lovely place. Be a shame if anything happened to it." His Neighbourhood Insurance is available at the Bank.',
+      lapseText: 'You could not cover Sal\'s insurance. The cover has lapsed, and so has his goodwill.',
+    },
+    // Dirty cash from the Laundromat. `raidInterval`: expected seconds
+    // between police raids while any is held. `fineMult`: they confiscate
+    // this multiple of what is still dirty, up to what you have.
+    laundering: {
+      raidInterval: 300,
+      fineMult: 1.5,
+    },
     ruin: {
       outrageThreshold: 400,  // outrage points before the devout picket the shop
       outrageDecay: 0.5,      // points lost per second

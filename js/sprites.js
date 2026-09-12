@@ -2,6 +2,38 @@
 (function (root) {
   'use strict';
 
+  // Sky gradient (top, middle, horizon) keyed by phase; linear between keys.
+  const SKY = [
+    [0.00, ['#2a1f3d', '#5b3a63', '#8a5a6a']], // night
+    [0.18, ['#2a1f3d', '#5b3a63', '#8a5a6a']],
+    [0.25, ['#5a4a8a', '#e08a6a', '#f5c78a']], // dawn
+    [0.33, ['#6fb8ea', '#bfe3f7', '#f6e6c8']], // day
+    [0.68, ['#6fb8ea', '#bfe3f7', '#f6e6c8']],
+    [0.77, ['#4a3a6a', '#e0705a', '#f2b060']], // dusk
+    [0.85, ['#2a1f3d', '#5b3a63', '#8a5a6a']], // night
+    [1.00, ['#2a1f3d', '#5b3a63', '#8a5a6a']],
+  ];
+
+  function hexToRgb(h) {
+    return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  }
+
+  function mix(a, b, k) {
+    const A = hexToRgb(a);
+    const B = hexToRgb(b);
+    return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * k)).join(',')})`;
+  }
+
+  function skyColours(phase) {
+    for (let i = 1; i < SKY.length; i++) {
+      if (phase <= SKY[i][0]) {
+        const k = (phase - SKY[i - 1][0]) / (SKY[i][0] - SKY[i - 1][0]);
+        return SKY[i - 1][1].map((c, j) => mix(c, SKY[i][1][j], k));
+      }
+    }
+    return SKY[SKY.length - 1][1].slice();
+  }
+
   const Sprites = {
     // Draw a vehicle as an emoji facing `dir` (+1 right, -1 left) with an
     // optional load label above it.
@@ -151,21 +183,43 @@
       return labels[labels.length - 1];
     },
 
-    sky(ctx, W, H, t) {
+    // ---- day and night ----------------------------------------------------
+    // `phase` and `day` come from the sim (SockSim.dayPhase / daylight):
+    // phase 0 is midnight, 0.5 noon; day is 0 at night and 1 in daylight.
+    sky(ctx, W, H, t, phase, day) {
+      if (phase === undefined) phase = 0;
+      if (day === undefined) day = 0;
+      const c = skyColours(phase);
       const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, '#2a1f3d');
-      g.addColorStop(0.6, '#5b3a63');
-      g.addColorStop(1, '#8a5a6a');
+      g.addColorStop(0, c[0]);
+      g.addColorStop(0.6, c[1]);
+      g.addColorStop(1, c[2]);
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      for (let i = 0; i < 24; i++) {
-        const x = (i * 137.5) % W;
-        const y = (i * 61.3) % (H * 0.35);
-        ctx.globalAlpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 2 + i));
-        ctx.fillRect(x, y, 2, 2);
+      // stars fade out as the day comes
+      if (day < 1) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        for (let i = 0; i < 24; i++) {
+          const x = (i * 137.5) % W;
+          const y = (i * 61.3) % (H * 0.35);
+          ctx.globalAlpha = (1 - day) * (0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 2 + i)));
+          ctx.fillRect(x, y, 2, 2);
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
+      // the sun arcs over between dawn and dusk, the moon through the night
+      const arc = (from, to, colour, r) => {
+        const k = (phase - from) / (to - from);
+        if (k < 0 || k > 1) return;
+        const x = 30 + k * (W - 60);
+        const y = 30 + (1 - Math.sin(k * Math.PI)) * H * 0.35;
+        ctx.fillStyle = colour;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      arc(0.2, 0.8, '#ffd23f', 16);
+      arc(phase >= 0.75 ? 0.75 : -0.25, phase >= 0.75 ? 1.25 : 0.25, '#f5e9c8', 12);
     },
   };
 

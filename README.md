@@ -27,7 +27,7 @@ The two canvases and a KPI strip stay on the page. Everything else (machines, re
 - `js/scenarios.js` – named test saves for jumping to a stage of the game (drawer → Test saves, or `?scenario=id`), including one for each way things go wrong.
 - `js/audio.js` – Sock Radio: four looping tracks synthesised in the browser (chiptune, electro, hip hop, waltz). Each adds layers as the factory and shop grow. The radio widget in the bottom-right corner has previous, play/pause, next and volume.
 - `js/format.js` – number and time formatting.
-- `js/sprites.js` – drawing helpers shared by both canvases.
+- `js/sprites.js` – drawing helpers shared by both canvases, including the sky for the day/night cycle.
 - `js/factory.js` – the factory canvas: the building for each level, grannies and machines inside, the stock pile, vehicles loading at the bay.
 - `js/street.js` – the street canvas: neighbouring shops, your expanding shop, pedestrians and the purchases they make, vehicles unloading at the door.
 - `js/ui.js` – builds the DOM once and refreshes it from state.

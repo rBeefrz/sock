@@ -195,29 +195,11 @@
       return labels[labels.length - 1];
     }
 
-    function drawSky() {
-      const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, '#2a1f3d');
-      g.addColorStop(0.6, '#5b3a63');
-      g.addColorStop(1, '#8a5a6a');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-      // a few stars
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      for (let i = 0; i < 24; i++) {
-        const x = ((i * 137.5) % W);
-        const y = ((i * 61.3) % (H * 0.35));
-        const tw = 0.5 + 0.5 * Math.sin(t * 2 + i);
-        ctx.globalAlpha = 0.3 + 0.5 * tw;
-        ctx.fillRect(x, y, 2, 2);
-      }
-      ctx.globalAlpha = 1;
-      // moon
-      ctx.fillStyle = '#f5e9c8';
-      ctx.beginPath();
-      ctx.arc(W - 60, 36, 14, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // Windows glow after dark and show as glass by day.
+    const WINDOW_LIT = '#f5d98a';
+    const WINDOW_DARK = '#3a2c3c';
+    const WINDOW_GLASS = '#9ccbe6';
+    let daylight = 1;
 
     function drawGround() {
       const { groundY, pavementH, roadY } = layout();
@@ -247,6 +229,42 @@
       ctx.setLineDash([]);
     }
 
+    // The lot a rival would open in: two doors to the right, or the left if
+    // the shop has grown over that side.
+    function rivalLot(span) {
+      if (span.right + 2 < D.streetLots) return span.right + 2;
+      if (span.left - 2 >= 0) return span.left - 2;
+      return span.right + 1 < D.streetLots ? span.right + 1 : span.left - 1;
+    }
+
+    function drawRival(lot) {
+      const { lotW, groundY } = layout();
+      const x = lot * lotW;
+      const h = H * 0.42 + ((lot * 37) % 3) * 8;
+      const top = groundY - h;
+      const awnY = groundY - h * 0.45;
+      // a garish banner over the old sign, and a SALE flash in the window
+      ctx.fillStyle = '#ffd23f';
+      ctx.fillRect(x + 2, awnY - 20, lotW - 4, 16);
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 2, awnY - 20, lotW - 4, 16);
+      ctx.fillStyle = '#a0261a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const label = fitText(['SOCKS 4 LESS', '4 LESS'], lotW - 10, 10, 6);
+      ctx.fillText(label, x + lotW / 2, awnY - 12);
+      ctx.fillStyle = '#ff7bac';
+      ctx.fillRect(x + 3, awnY, lotW - 6, 8);
+      if (Math.sin(t * 4) > 0) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 8px system-ui, sans-serif';
+        ctx.fillText('SALE!', x + lotW * 0.35, awnY + 12 + h * 0.2);
+      }
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText('🧦', x + lotW * 0.35, awnY + 12 + h * 0.32);
+    }
+
     function drawNeighbour(lot) {
       const { lotW, groundY } = layout();
       const n = NEIGHBOURS[lot];
@@ -266,7 +284,7 @@
       const cols = Math.max(1, Math.floor(lotW / (win * 2)));
       const startX = x + (lotW - cols * win * 2 + win) / 2;
       for (let c = 0; c < cols; c++) {
-        ctx.fillStyle = (c + lot) % 3 === 0 ? '#3a2c3c' : '#f5d98a';
+        ctx.fillStyle = daylight > 0.5 ? WINDOW_GLASS : (c + lot) % 3 === 0 ? WINDOW_DARK : WINDOW_LIT;
         ctx.fillRect(startX + c * win * 2, top + 16, win, win * 1.3);
       }
       // awning
@@ -312,7 +330,7 @@
         const rows = level >= 3 ? 2 : 1;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
-            ctx.fillStyle = '#f5d98a';
+            ctx.fillStyle = daylight > 0.5 ? WINDOW_GLASS : WINDOW_LIT;
             ctx.fillRect(startX + c * win * 2, top + 16 + r * (win * 1.8), win, win * 1.3);
           }
         }
@@ -354,6 +372,22 @@
         const wx = side === 'L' ? x + 6 + 10 + (k * 18) % Math.max(18, winLeftW - 12) : door + doorW / 2 + 14 + (k * 18) % Math.max(18, winRightW - 12);
         if ((side === 'L' && winLeftW <= 8) || (side === 'R' && winRightW <= 8)) continue;
         ctx.fillText('🧦', wx, frontTop + frontH / 2);
+      }
+      // a brick through the window
+      if (Sim.eventActive(s, 'vandals') && winLeftW > 8) {
+        const cx = x + 6 + winLeftW * 0.5;
+        const cy = frontTop + frontH * 0.4;
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 7; i++) {
+          const a = i * 0.9 + 0.3;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + Math.cos(a) * (14 + (i % 3) * 6), cy + Math.sin(a) * (10 + (i % 2) * 6));
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#a0261a';
+        ctx.fillRect(cx - 4, cy - 2, 8, 5);
       }
       // door
       ctx.fillStyle = inside > 0 ? '#ffe9a8' : '#4a3a2a';
@@ -442,14 +476,55 @@
           S.placard(ctx, x, y, PLACARDS[i], t, i);
         }
       }
+      // the doorman, once you have one: black coat, earpiece, arms folded
+      const guarded = Sim.hasSecurity(s);
+      if (guarded) {
+        const x = door - 26;
+        S.person(ctx, x, y - 2, { skin: SKIN[3], shirt: '#1a1a1a', pants: '#1a1a1a', hair: '#111', glasses: true }, t, 1.2);
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(x + 5, y - 38, 2, 2);
+      }
       if (Sim.eventActive(s, 'enforcer')) {
-        const x = door + 30;
+        // kept at arm's length across the road when there is someone on the door
+        const x = guarded ? door + 96 : door + 30;
         S.person(ctx, x, y - 2, { skin: '#e8b894', shirt: '#1a1a1a', pants: '#1a1a1a', hat: true, glasses: true }, t, 1.15);
-        if (Math.sin(t * 0.7) > 0.6) S.bubble(ctx, x, y - 6, 'Nice shop.');
+        if (Math.sin(t * 0.7) > 0.6) S.bubble(ctx, x, y - 6, guarded ? 'Hmph.' : 'Nice shop.');
+      }
+      if (Sim.eventActive(s, 'police')) {
+        const x = door + 34;
+        S.person(ctx, x, y - 2, { skin: '#c68f6a', shirt: '#1a2a55', pants: '#1a2a55', hat: true }, t, 1.1);
+        S.person(ctx, x + 18, y - 2, { skin: '#f5d0b0', shirt: '#1a2a55', pants: '#1a2a55', hat: true }, t + 2, 1.1);
+        const laneY = roadY + (H - roadY) * 0.55;
+        const vx = door + 80;
+        S.vehicle(ctx, { id: 'police', icon: '🚔' }, vx, laneY + 12, -1, 0, '');
+        // blue lights
+        ctx.fillStyle = Math.sin(t * 12) > 0 ? '#5ad2f4' : '#ff7bac';
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.arc(vx, laneY - 22, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.font = 'bold 7px system-ui, sans-serif';
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(door - 22, y - 60, 44, 11);
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(door - 22, y - 60, 44, 11);
+        ctx.fillStyle = '#1a2a55';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('POLICE - CLOSED', door, y - 54.5);
+      }
+      if (s.order) {
+        // the customer waits by the door with a clipboard, counting what is still owed
+        const x = door + (Sim.hasSecurity(s) ? 40 : 26);
+        S.person(ctx, x, y - 2, { skin: SKIN[1], shirt: '#f2c95a', pants: '#3c3c50', hair: HAIR[2] }, t, 1.05);
+        S.bubble(ctx, x, y - 2, `${s.order.icon} ${F.fmtInt(s.order.socks - s.order.filled)} to go`);
       }
       if (Sim.eventActive(s, 'bailiffs')) {
         const x = door + 30;
         S.person(ctx, x, y - 2, { skin: '#c68f6a', shirt: '#7f8fa6', pants: '#3c3c50', vest: true }, t, 1.1);
+        if (guarded && Math.sin(t * 0.9) > 0.5) S.bubble(ctx, x, y - 6, 'Just a minute, sir.');
         ctx.font = '11px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -535,10 +610,13 @@
     function draw() {
       const s = getState();
       const span = shopSpan(s.shopLevel);
-      drawSky();
+      const phase = Sim.dayPhase(s);
+      daylight = Sim.daylight(phase);
+      S.sky(ctx, W, H, t, phase, daylight);
       for (let lot = 0; lot < D.streetLots; lot++) {
         if (lot < span.left || lot > span.right) drawNeighbour(lot);
       }
+      if (Sim.eventActive(s, 'rival')) drawRival(rivalLot(span));
       drawShop(s);
       drawGround();
       drawVehicles(s);

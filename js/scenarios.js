@@ -81,8 +81,14 @@
     });
     (o.events || []).forEach((id) => {
       const d = D.events[id];
-      s.events.push({ id, remaining: d.duration || null });
+      s.events.push({ id, remaining: d.duration || null, guarded: false, vars: {} });
     });
+    // offer / order: { customer, icon, socks, premium, expiresIn | dueIn, filled }
+    if (o.offer) s.offer = { customer: o.offer.customer, icon: o.offer.icon, socks: o.offer.socks, premium: o.offer.premium, expires: s.playTime + o.offer.expiresIn };
+    if (o.order) s.order = { customer: o.order.customer, icon: o.order.icon, socks: o.order.socks, filled: o.order.filled || 0, premium: o.order.premium, due: s.playTime + o.order.dueIn };
+    s.dirty = o.dirty || 0;
+    s.protection = !!o.protection;
+    s.protectionOffered = s.shopLevel >= D.protection.shopLevel;
     Sim.setMarkup(s, o.markup || 1);
 
     const knitted = D.factoryLevels[s.factoryLevel].requiresKnitted;
@@ -229,6 +235,92 @@
         marketing: 3, sockLine: 3,
         loans: [{ lender: 'bank', principal: 50000, owed: 60000, dueIn: 30 }],
         money: 2000, socks: 300, factoryStock: 2000, playTime: 2 * 3600,
+      }),
+    },
+    {
+      id: 'security', name: 'Someone on the door', icon: '💂',
+      desc: 'A boutique with Door Security, Sal due in 20 seconds and the bank due in 50. Neither visit goes the way they planned.',
+      build: (now) => make(now, {
+        factoryLevel: 2, shopLevel: 2,
+        research: ['m_machine', 'v_van', 'l_crates', 's_argyle', 'r_security'],
+        producers: { granny: 15, loom: 10, machine: 4 },
+        vehicles: { bicycle: 1, van: 2 },
+        upgrades: ['granny_0', 'needles'],
+        marketing: 3, sockLine: 3,
+        loans: [{ lender: 'mafia', principal: 3000, owed: 3600, dueIn: 20 }, { lender: 'bank', principal: 10000, owed: 12000, dueIn: 50 }],
+        money: 400, socks: 250, factoryStock: 120, playTime: 75 * 60,
+      }),
+    },
+    {
+      id: 'bulkorder', name: 'A big order', icon: '⚽',
+      desc: 'A Sock Shop with a hundred striped socks on the shelves and the football club at the door wanting four hundred at double price.',
+      build: (now) => make(now, {
+        factoryLevel: 2, shopLevel: 1,
+        research: ['m_machine', 'v_van', 'l_crates', 's_striped'],
+        producers: { granny: 12, loom: 10, machine: 3 },
+        vehicles: { bicycle: 2, van: 1 },
+        upgrades: ['granny_0', 'needles'],
+        marketing: 2, sockLine: 1,
+        offer: { customer: 'the football club', icon: '⚽', socks: 400, premium: 2, expiresIn: 40 },
+        money: 900, socks: 100, factoryStock: 150, playTime: 42 * 60,
+      }),
+    },
+    {
+      id: 'rival', name: 'Socks 4 Less', icon: '🏪',
+      desc: 'A boutique with a rival two doors down taking half the passers-by, and just about enough cash to buy them out.',
+      build: (now) => make(now, {
+        factoryLevel: 2, shopLevel: 2,
+        research: ['m_machine', 'v_van', 'l_crates', 's_argyle'],
+        producers: { granny: 15, loom: 12, machine: 6 },
+        vehicles: { bicycle: 1, van: 2 },
+        upgrades: ['granny_0', 'needles'],
+        marketing: 3, sockLine: 3,
+        events: ['rival'],
+        money: 8500, socks: 300, factoryStock: 200, playTime: 68 * 60,
+      }),
+    },
+    {
+      id: 'racket', name: 'Sal sends his sympathies', icon: '🧱',
+      desc: 'An Emporium with no insurance and a fresh brick through the window. Sal is at the Bank, being understanding.',
+      build: (now) => make(now, {
+        factoryLevel: 3, shopLevel: 3,
+        research: ['m_line', 'v_lorry', 'l_routes', 'l_training', 's_wool'],
+        producers: { granny: 25, loom: 25, machine: 15, line: 4 },
+        vehicles: { van: 3, lorry: 1 },
+        upgrades: ['granny_0', 'granny_1', 'loom_0', 'needles', 'dpn', 'qc'],
+        marketing: 4, sockLine: 4,
+        events: ['vandals'],
+        money: 20000, socks: 2000, factoryStock: 3000, playTime: 2.5 * 3600,
+      }),
+    },
+    {
+      id: 'laundromat', name: 'A bag of Sal\'s money', icon: '🧺',
+      desc: 'A Sock Shop that just took $4,000 of dirty cash from the Laundromat. Sell fast, or watch for blue lights.',
+      build: (now) => make(now, {
+        factoryLevel: 2, shopLevel: 1,
+        research: ['m_machine', 'v_van', 'l_crates', 's_striped'],
+        producers: { granny: 15, loom: 10, machine: 4 },
+        vehicles: { bicycle: 2, van: 1 },
+        upgrades: ['granny_0', 'needles'],
+        marketing: 2, sockLine: 1,
+        loans: [{ lender: 'launder', principal: 3200, owed: 3200, dueIn: 300 }],
+        dirty: 4000,
+        money: 4300, socks: 120, factoryStock: 200, playTime: 58 * 60,
+      }),
+    },
+    {
+      id: 'inspected', name: 'The inspector calls', icon: '📋',
+      desc: 'A corner-cutting Workshop with the health inspector in the yard. Nothing is being made for a minute.',
+      build: (now) => make(now, {
+        factoryLevel: 2, shopLevel: 1,
+        research: ['m_loom', 'v_van', 's_striped', 'd_corners'],
+        producers: { granny: 30, loom: 6 },
+        upkeep: { granny: 0.6, loom: 0.6 },
+        vehicles: { bicycle: 2, van: 1 },
+        upgrades: ['granny_0', 'needles'],
+        marketing: 2, sockLine: 1,
+        events: ['inspector'],
+        money: 700, socks: 50, factoryStock: 80, playTime: 52 * 60,
       }),
     },
     {

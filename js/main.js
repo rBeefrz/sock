@@ -82,6 +82,12 @@
       refresh();
     },
     startResearch: (id) => {
+      const r = D.research.find((x) => x.id === id);
+      if (r && r.branch && !Sim.researchDone(state, id) && Sim.researchAvailable(state, r) && state.money >= r.cost && !state.activeResearch) {
+        const others = Sim.branchOptions(r.branch).filter((x) => x.id !== id).map((x) => x.name);
+        const ok = window.confirm(`Adopt ${r.name} as your ${D.branches[r.branch].name.toLowerCase()}? It holds until you retire, and rules out ${others.join(' and ')} for this run.`);
+        if (!ok) return;
+      }
       if (Sim.startResearch(state, id)) ui.toast(`Research started: ${researchName(id)}.`, 3000);
       refresh();
     },
@@ -143,6 +149,16 @@
       if (Sim.resolveEvent(state, id)) ui.toast(`${d.icon} ${d.resolve.text}`, 5000);
       refresh();
     },
+    acceptOrder: () => {
+      const o = state.offer;
+      if (Sim.acceptOrder(state)) ui.toast(`${o.icon} Order accepted: ${o.socks} socks, ${F.fmtTime(D.orders.deadline)} to fill it.`, 4000);
+      refresh();
+    },
+    declineOrder: () => { Sim.declineOrder(state); refresh(); },
+    setProtection: (on) => {
+      if (Sim.setProtection(state, on)) ui.toast(on ? '🕴️ Sal says thank you. Nothing will happen to the shop.' : '🕴️ Sal says he understands. He does not look like he understands.', 4000);
+      refresh();
+    },
     loadScenario: (id) => {
       const sc = Scenarios.find(id);
       if (!sc) return;
@@ -171,9 +187,15 @@
   // Trouble that started this step, and the end of the run if it came to that.
   function announceTrouble(result) {
     (result.events || []).forEach((id) => {
+      const e = state.events.find((x) => x.id === id);
       const d = D.events[id];
-      ui.toast(`${d.icon} ${d.name}: ${d.text}`, 8000);
+      ui.toast(`${d.icon} ${d.name}: ${e ? Sim.eventText(e, 'text') : d.text}`, 8000);
     });
+    if (result.offer && state.offer) {
+      const o = state.offer;
+      ui.toast(`${o.icon} ${o.customer} want ${o.socks} socks at ${o.premium}× price. Accept or decline under the KPIs.`, 8000);
+    }
+    if (result.orderDone > 0) ui.toast(`📦 Order delivered. ${F.money(result.orderDone)} in the till.`, 5000);
     if (result.ruined) {
       replaceState(state);
       save(false);
@@ -181,11 +203,19 @@
     }
   }
 
+  // The track Sock Radio drifted onto by itself, if it is audible, for the
+  // benefit of whoever in the factory likes it.
+  function serenading() {
+    const st = actions.audio.status();
+    return st.live && st.drifted ? st.id : null;
+  }
+
   let last = performance.now();
   let lastRefresh = 0;
   function frame(now) {
     const gap = (now - last) / 1000;
     last = now;
+    Sim.setSerenade(state, serenading());
     let result;
     if (gap > CATCHUP_GAP_S) {
       // The tab was asleep: move and sell at the expected rates for the missing time.

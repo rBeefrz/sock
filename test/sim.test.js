@@ -231,6 +231,7 @@ test('upkeep is paid continuously and scales with the slider', () => {
 
 test('unpaid upkeep is announced once and maximises outages', () => {
   const s = endgame(0);
+  s.protectionOffered = true; // Sal has already been round; keep the news to the wages
   s.producers.granny = 10;
   Sim.tick(s, 1, 'live', never);
   assert.equal(s.unpaid, true);
@@ -260,6 +261,7 @@ test('outage factor: cheap means frequent, generous means rare', () => {
 
 test('an outage takes units off the line, is reported, and ends', () => {
   const s = endgame(1e6);
+  s.shopLevel = 0; // an rng that fires everything would otherwise bring bulk orders too
   s.producers.granny = 20;
   const full = Sim.productionRate(s);
   Sim.tick(s, 1, 'live', always);
@@ -664,6 +666,7 @@ test('repaying Sal early costs only what is owed and sends the enforcer home', (
 
 test('missing Sal\'s date escalates: enforcer, granny, bikers, takeover', () => {
   const s = endgame(0);
+  delete s.research.r_security; // nobody on the door: the plain outcome
   s.shopLevel = 2;
   s.marketing = 3;
   s.producers.granny = 10;
@@ -740,6 +743,7 @@ test('the bank collects in full when it can', () => {
 
 test('a short bank loan brings the bailiffs, who seize vehicles, machines, then the shop', () => {
   const s = endgame(0);
+  delete s.research.r_security; // nobody on the door: the plain outcome
   s.shopLevel = 2;
   s.factoryLevel = 2;
   s.producers.granny = 10;
@@ -820,4 +824,356 @@ test("saves from before the Devil's Sock keep selling the same line", () => {
   old.research = { s_striped: true, s_argyle: true };
   const m = Sim.deserialize(JSON.stringify(old), 0);
   assert.equal(Sim.currentLine(m).id, 'argyle');
+});
+
+test('each radio track suits one kind of producer, only when it drifted on, and is never saved', () => {
+  const s = endgame(1e9);
+  s.producers.granny = 10;
+  s.producers.loom = 10;
+  s.producers.machine = 5;
+  const granny = Sim.producerRate(s, 'granny');
+  const loom = Sim.producerRate(s, 'loom');
+  const machine = Sim.producerRate(s, 'machine');
+  const expected = Sim.expectedProductionRate(s);
+  const waltz = D.radio.serenades.find((x) => x.track === 'waltz');
+  assert.equal(Sim.setSerenade(s, 'waltz'), true);
+  assert.equal(Sim.setSerenade(s, 'waltz'), false, 'already on');
+  close(Sim.producerRate(s, 'granny'), granny * waltz.mult);
+  close(Sim.producerRate(s, 'loom'), loom, 'looms do not care for Strauss');
+  assert.match(s.news[0].text, /waltz/);
+  assert.ok(Sim.expectedProductionRate(s) > expected, 'expected mode hears it too');
+  const again = Sim.deserialize(Sim.serialize(s), 0);
+  assert.equal(again.serenade, null, 'a loaded save starts quiet');
+  // the station changes: the grannies sigh, the machines perk up
+  assert.equal(Sim.setSerenade(s, 'chiptune'), true);
+  assert.match(s.news[1].text, /waltz has finished/);
+  assert.match(s.news[0].text, /Chiptune/);
+  close(Sim.producerRate(s, 'granny'), granny);
+  close(Sim.producerRate(s, 'machine'), machine * 1.2);
+  close(Sim.producerRate(s, 'loom'), loom);
+  assert.equal(Sim.setSerenade(s, null), true);
+  close(Sim.producerRate(s, 'machine'), machine);
+  // a track nobody in the building cares about flips silently
+  const t = Sim.newState(0);
+  Sim.setSerenade(t, 'hiphop');
+  assert.equal(t.news.length, 0);
+});
+
+test('Door Security needs a boutique and softens the street trouble', () => {
+  const s = rich(1e9);
+  const sec = D.research.find((r) => r.id === 'r_security');
+  s.shopLevel = 1;
+  assert.equal(Sim.researchBlockers(s, sec).shopLevel, 2);
+  s.shopLevel = 2;
+  assert.equal(Sim.researchAvailable(s, sec), true);
+  assert.equal(Sim.hasSecurity(s), false);
+  s.research.r_security = true;
+  assert.equal(Sim.hasSecurity(s), true);
+
+  const i0 = Sim.interest(s);
+  Sim.startEvent(s, 'enforcer');
+  const e = s.events[0];
+  assert.equal(e.guarded, true);
+  assert.equal(e.remaining, D.events.enforcer.guarded.duration);
+  close(Sim.interest(s), i0 * D.events.enforcer.guarded.interest, 'most customers still come in');
+  assert.match(s.news[0].text, /Security leaned back/);
+  Sim.tick(s, D.events.enforcer.guarded.duration + 1, 'live', never);
+  assert.equal(Sim.eventActive(s, 'enforcer'), false, 'and he leaves sooner');
+  assert.equal(s.news[0].text, D.events.enforcer.endText);
+
+  s.socks = 1000;
+  Sim.startEvent(s, 'bikers');
+  assert.equal(s.socks, 900, 'a tenth of the shelves, not half');
+  assert.equal(Sim.footTraffic(s) > 0, true, 'the street is not emptied');
+
+  // the guarded flag survives a save; a picket has no guarded form
+  Sim.startEvent(s, 'picket');
+  const again = Sim.deserialize(Sim.serialize(s), 0);
+  assert.equal(again.events.find((x) => x.id === 'bikers').guarded, true);
+  assert.equal(again.events.find((x) => x.id === 'picket').guarded, false);
+  assert.equal(Sim.eventDef(again.events.find((x) => x.id === 'picket')).interest, D.events.picket.interest);
+});
+
+test('with security the bank\'s bailiffs are stalled once, then seize as usual', () => {
+  const s = rich(0);
+  s.shopLevel = 2;
+  s.research.r_security = true;
+  s.vehicles.push({ type: 'backpack', phase: 'loading', progress: 0, load: 0, timer: 0 });
+  Sim.takeLoan(s, 'bank');
+  const loan = Sim.loanFor(s, 'bank');
+  loan.due = 0;
+  s.money = 0;
+  const grace = D.events.bailiffs.guarded.grace;
+  let r = Sim.tick(s, 1, 'live', never);
+  assert.deepEqual(r.events, ['bailiffs']);
+  assert.ok(Sim.loanFor(s, 'bank'), 'the loan is still there');
+  assert.equal(loan.stage, 1);
+  assert.equal(s.vehicles.length, 2, 'nothing taken yet');
+  close(loan.due, grace);
+  assert.match(s.news[0].text, /keeping them talking/);
+  // find the money in time (interest still runs) and they leave empty-handed
+  s.money = loan.owed * 2;
+  r = Sim.tick(s, grace, 'live', never);
+  assert.equal(Sim.loanFor(s, 'bank'), null);
+  assert.match(s.news[0].text, /collected .* in full/);
+
+  // no money the second time: they take things
+  const t = rich(0);
+  t.shopLevel = 2;
+  t.research.r_security = true;
+  t.vehicles.push({ type: 'backpack', phase: 'loading', progress: 0, load: 0, timer: 0 });
+  Sim.takeLoan(t, 'bank');
+  const l2 = Sim.loanFor(t, 'bank');
+  l2.due = 0;
+  t.money = 0;
+  Sim.tick(t, 1, 'live', never);
+  assert.equal(l2.stage, 1);
+  Sim.tick(t, grace + 1, 'live', never);
+  assert.equal(t.vehicles.length, 1, 'the spare courier went');
+});
+
+test('foot traffic follows the time of day, and a Late Licence keeps the night open', () => {
+  const s = endgame(1e9);
+  const day = D.day;
+  const at = (phase) => { s.playTime = (phase - day.offset + 1) % 1 * day.length; return Sim.footTraffic(s); };
+  const noon = at(0.4);
+  close(Sim.dayPhase(s), 0.4);
+  close(at(0.5), noon * day.lunchTraffic, 'busy at lunch');
+  close(at(0.95), noon * day.nightTraffic, 'quiet at night');
+  assert.equal(Sim.daylight(0.95), 0);
+  assert.equal(Sim.daylight(0.5), 1);
+  s.upgrades.latelicence = true;
+  close(at(0.95), noon, 'the late licence fills the night, and never more than the day');
+  // a long expected step averages the day out rather than freezing it at one moment
+  delete s.upgrades.latelicence;
+  s.playTime = 0;
+  s.socks = 1e12;
+  const short = Sim.tick(s, 1, 'expected').sold;
+  const long = Sim.tick(s, day.length, 'expected').sold / day.length;
+  assert.ok(long < short && long > short * day.nightTraffic, 'a whole day sells less per second than a sunny second');
+});
+
+test('a bulk order is offered, filled off the shelves, and paid at a premium', () => {
+  const s = endgame(0);
+  s.shopLevel = 1;
+  s.protectionOffered = true;
+  s.socks = 0;
+  let r = Sim.tick(s, 1, 'live', never);
+  assert.equal(s.offer, null, 'nothing without a roll');
+  r = Sim.tick(s, 1, 'live', always);
+  assert.ok(s.offer, 'an offer arrives');
+  assert.equal(r.offer, true);
+  assert.equal(s.offer.customer, D.orders.customers[0].name);
+  assert.equal(s.offer.premium, D.orders.premiumMin);
+  assert.ok(s.offer.socks >= D.orders.minSocks);
+  assert.match(s.news[0].text, /want/);
+  assert.equal(Sim.acceptOrder(s), true);
+  assert.equal(s.offer, null);
+  assert.ok(s.order);
+  const o = s.order;
+  close(o.due, s.playTime + D.orders.deadline);
+  assert.equal(Sim.acceptOrder(s), false, 'one at a time');
+  // socks arrive in two lots
+  s.socks = Math.floor(o.socks / 2);
+  Sim.tick(s, 1, 'live', never);
+  assert.equal(s.socks, 0, 'everything on the shelf went into the order');
+  assert.equal(o.filled, Math.floor(o.socks / 2));
+  s.socks = o.socks;
+  const money = s.money;
+  r = Sim.tick(s, 1, 'live', never);
+  assert.equal(s.order, null);
+  assert.equal(s.ordersDone, 1);
+  close(s.money - money, o.socks * Sim.basePrice(s) * Sim.threadBonus(s) * o.premium);
+  assert.ok(r.orderDone > 0);
+  assert.match(s.news[0].text, /collected/);
+  // an offer nobody answers goes elsewhere; one you decline is noted
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(Sim.declineOrder(s), true);
+  assert.equal(s.offer, null);
+  Sim.tick(s, 1, 'live', always);
+  Sim.tick(s, D.orders.offerWindow + 1, 'live', never);
+  assert.equal(s.offer, null);
+  assert.match(s.news[0].text, /elsewhere/);
+});
+
+test('missing a bulk order deadline pays base price for what arrived and dents your name', () => {
+  const s = endgame(0);
+  s.shopLevel = 1;
+  s.protectionOffered = true;
+  s.socks = 0;
+  Sim.tick(s, 1, 'live', always);
+  Sim.acceptOrder(s);
+  const o = s.order;
+  s.socks = 5;
+  const i0 = Sim.interest(s);
+  const r = Sim.tick(s, D.orders.deadline + 1, 'live', never);
+  assert.equal(s.order, null);
+  assert.equal(s.ordersDone, 0);
+  close(s.money, 5 * Sim.basePrice(s) * Sim.threadBonus(s));
+  assert.deepEqual(r.events, ['letdown']);
+  assert.match(s.news[0].text, new RegExp(o.customer));
+  close(Sim.interest(s), i0 * D.events.letdown.interest);
+  Sim.tick(s, D.events.letdown.duration + 1, 'live', never);
+  assert.match(s.news[0].text, new RegExp(o.customer.replace(/^a /, '')));
+});
+
+test('a rival shop opens by itself, halves traffic, and can be bought out at a rising price', () => {
+  const s = rich(1e9);
+  s.shopLevel = 2;
+  const traffic = Sim.footTraffic(s);
+  assert.equal(Sim.spawnAllowed(s, D.events.rival), true);
+  s.shopLevel = 1;
+  assert.equal(Sim.spawnAllowed(s, D.events.rival), false, 'a kiosk is beneath their notice');
+  s.shopLevel = 2;
+  Sim.tick(s, 1, 'expected', always);
+  assert.equal(Sim.eventActive(s, 'rival'), false, 'nothing spawns in expected mode');
+  const r = Sim.tick(s, 1, 'live', always);
+  assert.ok(r.events.indexOf('rival') >= 0);
+  close(Sim.footTraffic(s), traffic * 0.5);
+  const cost = Sim.resolveCost(s, 'rival');
+  close(cost, Math.max(D.events.rival.resolve.min, Sim.assetValue(s) * D.events.rival.resolve.assetFraction));
+  assert.equal(Sim.resolveEvent(s, 'rival'), true);
+  assert.equal(Sim.eventActive(s, 'rival'), false);
+  close(Sim.footTraffic(s), traffic);
+  assert.match(s.news[0].text, /skip/);
+  assert.ok(s.cooldowns.rival > 0, 'they need time to find new premises');
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(Sim.eventActive(s, 'rival'), false, 'not straight back');
+  Sim.tick(s, D.events.rival.spawn.cooldown + 1, 'live', never);
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(Sim.eventActive(s, 'rival'), true, 'and then they are');
+  const R = D.events.rival.resolve;
+  close(Sim.resolveCost(s, 'rival'), Math.max(R.min, Sim.assetValue(s) * R.assetFraction * R.growth), 'dearer the second time');
+});
+
+test('cutting corners invites the health inspector, who fines you and closes the factory', () => {
+  const s = rich(1000);
+  s.factoryLevel = 2;
+  s.research.m_granny = true;
+  s.research.m_loom = true;
+  s.producers.granny = 5;
+  s.producers.loom = 5;
+  assert.equal(Sim.spawnAllowed(s, D.events.inspector), false);
+  s.research.d_corners = true;
+  assert.equal(Sim.spawnAllowed(s, D.events.inspector), true);
+  const prod = Sim.productionRate(s);
+  assert.ok(prod > 0);
+  const r = Sim.tick(s, 0.1, 'live', always);
+  assert.ok(r.events.indexOf('inspector') >= 0);
+  assert.ok(s.money < 1000 - D.events.inspector.fineMin + 1, 'fined');
+  assert.ok(s.lifetimeFines > 0);
+  assert.match(s.news.find((n) => /inspector/.test(n.text)).text, /fined \$/);
+  assert.equal(Sim.productionRate(s), 0, 'everything stopped');
+  assert.equal(Sim.expectedProductionRate(s), 0);
+  Sim.tick(s, D.events.inspector.duration + 1, 'live', never);
+  assert.equal(Sim.eventActive(s, 'inspector'), false);
+  assert.ok(Sim.productionRate(s) > 0);
+});
+
+test("Sal's insurance: offered at the Emporium, costs a slice of assets, and keeps the vandals away", () => {
+  const s = rich(1e6);
+  s.shopLevel = 2;
+  assert.equal(Sim.protectionAvailable(s), false);
+  assert.equal(Sim.setProtection(s, true), false);
+  s.shopLevel = 3;
+  Sim.tick(s, 1, 'live', never);
+  assert.equal(s.protectionOffered, true);
+  assert.match(s.news[0].text, /shame if anything happened/);
+  assert.equal(Sim.spawnAllowed(s, D.events.vandals), true);
+  s.socks = 1000;
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(Sim.eventActive(s, 'vandals'), true);
+  assert.equal(s.socks, 800, 'a fifth of the stock walked off');
+  Sim.endEvent(s, 'vandals');
+  assert.equal(Sim.setProtection(s, true), true);
+  assert.equal(Sim.spawnAllowed(s, D.events.vandals), false);
+  const rate = Sim.protectionRate(s);
+  close(rate, Sim.assetValue(s) * D.protection.rate);
+  const money = s.money;
+  Sim.tick(s, 10, 'live', never);
+  close(s.money, money - rate * 10);
+  Sim.tick(s, D.events.vandals.spawn.cooldown + 1, 'live', never);
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(Sim.eventActive(s, 'vandals'), false, 'nothing happens to insured shops');
+  // and when the money runs out, so does the cover
+  s.money = 0;
+  Sim.tick(s, 1, 'live', never);
+  assert.equal(s.protection, false);
+  assert.match(s.news[0].text, /lapsed/);
+  // security softens the brick
+  s.research.r_security = true;
+  s.socks = 1000;
+  Sim.tick(s, D.events.vandals.spawn.cooldown + 1, 'live', never);
+  Sim.tick(s, 1, 'live', always);
+  assert.equal(s.socks, 950);
+});
+
+test('the Laundromat: dirty cash washes through honest sales, or the police take it', () => {
+  const s = rich(0);
+  s.shopLevel = 1;
+  const L = D.lenders.find((x) => x.id === 'launder');
+  const bag = Sim.loanOffer(s, 'launder');
+  assert.equal(Sim.takeLoan(s, 'launder'), bag);
+  assert.equal(s.money, bag);
+  assert.equal(s.dirty, bag);
+  assert.equal(s.lifetimeMoney, 0, 'not earnings');
+  const loan = Sim.loanFor(s, 'launder');
+  close(loan.owed, bag * (1 - L.cut), 'Sal wants 80% back');
+  close(Sim.loanOwed('launder', bag), loan.owed);
+  assert.match(s.news[0].text, /sports bag/);
+  assert.equal(Sim.raidInterval(s), D.laundering.raidInterval);
+  // honest money washes it
+  s.socks = 1e6;
+  Sim.tick(s, 1, 'expected', never);
+  assert.ok(s.dirty < bag && s.dirty > 0);
+  const dirty = s.dirty;
+  // a raid takes 1.5x what is still dirty and shuts the shop
+  const i0 = Sim.interest(s);
+  const r = Sim.tick(s, 1, 'expected', always);
+  assert.deepEqual(r.events, ['police']);
+  assert.equal(s.dirty, 0);
+  close(s.lifetimeFines, Math.min(s.money + s.lifetimeFines, dirty * D.laundering.fineMult));
+  assert.equal(Sim.interest(s), 0, 'closed while they count');
+  assert.equal(Sim.raidInterval(s), Infinity);
+  assert.match(s.news[0].text, /smells of Sal/);
+  Sim.tick(s, D.events.police.duration + 1, 'expected', never);
+  close(Sim.interest(s), i0);
+  // Sal still wants his cut, and misses are handled like his loans
+  assert.ok(Sim.loanFor(s, 'launder'));
+  s.money = 0;
+  Sim.tick(s, L.term, 'live', never);
+  assert.equal(Sim.eventActive(s, 'enforcer'), true);
+  assert.equal(Sim.loanFor(s, 'launder').stage, 1);
+  // paying up ends it
+  s.money = 1e9;
+  assert.ok(Sim.repayLoan(s, 'launder') > 0);
+  assert.equal(Sim.loanFor(s, 'launder'), null);
+});
+
+test('orders, insurance, dirty cash, cooldowns and event words survive a save round-trip', () => {
+  const s = rich(100);
+  s.shopLevel = 3;
+  Sim.tick(s, 1, 'live', always); // offers, vandals
+  Sim.acceptOrder(s);
+  Sim.setProtection(s, true);
+  s.dirty = 42;
+  s.cooldowns.rival = 12;
+  s.resolved.rival = 2;
+  Sim.startEvent(s, 'letdown', null, { customer: 'the hospital' });
+  const again = Sim.deserialize(Sim.serialize(s), 0);
+  assert.deepEqual(again.order, s.order);
+  assert.equal(again.protection, true);
+  assert.equal(again.dirty, 42);
+  assert.deepEqual(again.cooldowns, { rival: 12 });
+  assert.deepEqual(again.resolved, { rival: 2 });
+  const letdown = again.events.find((e) => e.id === 'letdown');
+  assert.deepEqual(letdown.vars, { customer: 'the hospital' });
+  assert.match(Sim.eventText(letdown, 'endText'), /the hospital/);
+  // junk is dropped
+  const junk = Sim.deserialize(JSON.stringify(Object.assign({}, JSON.parse(Sim.serialize(s)), { offer: 'no', order: { socks: -1 }, dirty: -5, cooldowns: { nope: 3, rival: -1 }, protection: 'yes' })), 0);
+  assert.equal(junk.offer, null);
+  assert.equal(junk.order, null);
+  assert.equal(junk.dirty, 0);
+  assert.deepEqual(junk.cooldowns, {});
+  assert.equal(junk.protection, true);
 });

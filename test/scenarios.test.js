@@ -102,6 +102,39 @@ test('scenarios differ in the ways they claim to', () => {
   assert.ok(fore.vehicles.length < vehiclesBefore, 'the bailiffs took vehicles');
   assert.ok(Sim.eventActive(fore, 'bailiffs'));
 
+  const guard = Scenarios.build('security', 0);
+  assert.ok(Sim.hasSecurity(guard));
+  Sim.tick(guard, 21, 'live', () => 0.999999);
+  assert.ok(Sim.eventActive(guard, 'enforcer'), 'Sal still sends someone');
+  assert.ok(guard.events.find((e) => e.id === 'enforcer').guarded, 'but he is kept at arm\'s length');
+  Sim.tick(guard, 30, 'live', () => 0.999999);
+  assert.equal(guard.loans.length, 2, 'the bank was stalled rather than paid');
+  assert.ok(Sim.eventActive(guard, 'bailiffs'));
+
+  const order = Scenarios.build('bulkorder', 0);
+  assert.ok(order.offer && order.offer.socks === 400);
+  assert.equal(Sim.acceptOrder(order), true);
+  Sim.tick(order, 1, 'live', () => 0.999999);
+  assert.equal(order.socks, 0, 'the shelves went straight into the order');
+
+  const rival = Scenarios.build('rival', 0);
+  assert.ok(Sim.eventActive(rival, 'rival'));
+  assert.ok(rival.money >= Sim.resolveCost(rival, 'rival'), 'the buyout is affordable');
+
+  const racket = Scenarios.build('racket', 0);
+  assert.ok(Sim.eventActive(racket, 'vandals'));
+  assert.equal(Sim.protectionAvailable(racket), true);
+  assert.equal(racket.protection, false);
+
+  const laundry = Scenarios.build('laundromat', 0);
+  assert.equal(laundry.dirty, 4000);
+  assert.equal(laundry.loans[0].lender, 'launder');
+  Sim.tick(laundry, 1, 'expected', () => 0);
+  assert.ok(Sim.eventActive(laundry, 'police'), 'the raid can come at any moment');
+
+  const inspected = Scenarios.build('inspected', 0);
+  assert.equal(Sim.productionRate(inspected), 0, 'closed by the inspector');
+
   const devil = Scenarios.build('devil', 0);
   assert.equal(Sim.currentLine(devil).id, 'devil');
   Sim.tick(devil, 60, 'expected');

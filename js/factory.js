@@ -29,6 +29,7 @@
     let knitPulse = 0;
     let celebrate = 0;
     let lastLevel = -1;
+    let daylight = 1;
     const pops = []; // little socks that pop when you knit
 
     function resize() {
@@ -176,7 +177,7 @@
       const win = 10;
       for (let i = 0; i < look.windows; i++) {
         const wx = bx + 10 + (i * (bw - 20)) / Math.max(1, look.windows) + 2;
-        ctx.fillStyle = prod > 0 || s.factoryLevel === 0 ? '#f5d98a' : '#3a2c3c';
+        ctx.fillStyle = daylight > 0.5 ? '#9ccbe6' : prod > 0 || s.factoryLevel === 0 ? '#f5d98a' : '#3a2c3c';
         ctx.fillRect(wx, top + 10, win, win * 1.3);
       }
       // cutaway floor: dark interior where the machines live
@@ -229,10 +230,11 @@
       let row = 0;
       let col = 0;
       const placed = [];
+      const closed = Sim.factoryClosed(s);
       D.producers.forEach((p) => {
         const n = s.producers[p.id];
         if (n <= 0) return;
-        if (Sim.onStrike(s, p.id)) {
+        if (Sim.onStrike(s, p.id) && !closed) {
           // they are outside with placards, not at their needles
           placed.push({ badge: `×${F.fmtInt(n)} ✊ ON STRIKE`, row, col });
           row++;
@@ -241,8 +243,9 @@
         const shown = Math.min(n, p.id === 'granny' ? 12 : 6);
         // dim the same share of the drawn tiles as units that are actually out
         const outTiles = Math.round(shown * Sim.downUnits(s, p.id) / n);
+        const humming = Sim.serenadeMult(s, p) > 1;
         for (let i = 0; i < shown; i++) {
-          placed.push({ icon: p.icon, row, col, i, out: i >= shown - outTiles, outIcon: p.care.outageIcon });
+          placed.push({ icon: p.icon, row, col, i, out: closed || i >= shown - outTiles, outIcon: closed ? '📋' : p.care.outageIcon, humming: humming && !closed });
           col++;
           if (col >= cols) { col = 0; row++; }
         }
@@ -267,11 +270,20 @@
           ctx.fillText(it.badge, x - tile / 2 + 2, y);
           ctx.textAlign = 'center';
         } else {
-          const bob = prod > 0 && !it.out ? Math.sin(t * 6 + it.i * 1.3 + it.row) * 1.5 : 0;
+          // humming along to the waltz: a quicker sway and the odd note drifting up
+          const bob = prod > 0 && !it.out ? Math.sin(t * (it.humming ? 9 : 6) + it.i * 1.3 + it.row) * (it.humming ? 2.5 : 1.5) : 0;
           ctx.font = '15px system-ui, sans-serif';
           ctx.globalAlpha = it.out ? 0.3 : 1;
           ctx.fillText(it.icon, x, y + bob);
           ctx.globalAlpha = 1;
+          if (it.humming && !it.out) {
+            const k = (t * 0.6 + it.i * 0.37) % 1;
+            ctx.font = '9px system-ui, sans-serif';
+            ctx.fillStyle = '#ffd23f';
+            ctx.globalAlpha = 1 - k;
+            ctx.fillText(it.i % 2 ? '♪' : '♫', x + 6 + Math.sin(k * 6) * 3, y - 6 - k * 16);
+            ctx.globalAlpha = 1;
+          }
           if (it.out) {
             ctx.font = '9px system-ui, sans-serif';
             ctx.fillText(it.outIcon, x + 6, y + 6);
@@ -309,7 +321,7 @@
 
     function drawTrouble(s, L) {
       const y = L.groundY + 18;
-      const striking = D.producers.some((p) => s.producers[p.id] > 0 && Sim.onStrike(s, p.id));
+      const striking = !Sim.factoryClosed(s) && D.producers.some((p) => s.producers[p.id] > 0 && Sim.onStrike(s, p.id));
       if (striking) {
         const left = L.bx + 60;
         const right = L.bayX - 70;
@@ -318,6 +330,24 @@
           S.person(ctx, x, y, { granny: true, shirt: STRIKE_SHIRTS[i], pants: '#5a3a63', skin: '#f5d0b0' }, t + i);
           S.placard(ctx, x, y, STRIKE_SIGNS[i], t, i);
         }
+      }
+      if (Sim.eventActive(s, 'inspector')) {
+        // clipboard at the door, and a notice on it
+        const x = L.bx + L.bw - 40;
+        S.person(ctx, x, y, { skin: '#f5d0b0', shirt: '#f0f0f0', pants: '#3c3c50', hair: '#8a8a8a', vest: true, glasses: true }, t, 1.05);
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('📋', x + 9, y - 24);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(L.bx + L.bw - 24, L.groundY - 24, 22, 12);
+        ctx.strokeStyle = '#111';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(L.bx + L.bw - 24, L.groundY - 24, 22, 12);
+        ctx.fillStyle = '#a0261a';
+        ctx.font = 'bold 6px system-ui, sans-serif';
+        ctx.fillText('CLOSED', L.bx + L.bw - 13, L.groundY - 18);
+        if (Math.sin(t * 0.8) > 0.6) S.bubble(ctx, x, y - 2, 'Tut tut.');
       }
       if (Sim.skimFraction(s) > 0 && s.factoryStock >= 1) {
         const k = (t * 0.5) % 1;
@@ -392,7 +422,9 @@
     function draw() {
       const s = getState();
       const L = layout(s);
-      S.sky(ctx, W, H, t);
+      const phase = Sim.dayPhase(s);
+      daylight = Sim.daylight(phase);
+      S.sky(ctx, W, H, t, phase, daylight);
       drawGround(L);
       drawBuilding(s, L);
       drawMachines(s, L);

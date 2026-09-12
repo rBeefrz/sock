@@ -31,6 +31,7 @@
       'save-status', 'toasts', 'floaters', 'news-list', 'news-empty', 'news-sub',
       'radio', 'radio-min', 'radio-body', 'radio-title', 'radio-tag', 'radio-layers', 'radio-prev', 'radio-play', 'radio-next', 'radio-vol',
       'list-scenarios', 'events', 'list-lenders', 'empty-lenders', 'badge-bank', 'stat-bankrupt',
+      'dirty-hint', 'protection-head', 'list-protection', 'stat-orders', 'stat-fines',
     ];
     const els = {};
     ids.forEach((id) => {
@@ -214,7 +215,7 @@
     D.lenders.forEach((L) => {
       const ratePerMin = (Math.exp(L.rate * 60) - 1) * 100;
       const borrow = itemButton(L.icon, L.name, L.desc);
-      borrow.meta.textContent = `${ratePerMin.toFixed(1)}%/min interest, capped at ×${L.cap}. ${L.terms}`;
+      borrow.meta.textContent = (L.laundering ? '' : `${ratePerMin.toFixed(1)}%/min interest, capped at ×${L.cap}. `) + L.terms;
       borrow.button.addEventListener('click', () => actions.takeLoan(L.id));
       borrow.button.hidden = true;
       const loan = itemButton(L.icon, `Owed to ${L.name}`, '');
@@ -223,6 +224,11 @@
       lenderRows.set(L.id, { borrow, loan, ratePerMin });
       els.listLenders.append(loan.button, borrow.button);
     });
+
+    // Sal's Neighbourhood Insurance: one row that toggles.
+    const protectionRow = itemButton('🕴️', "Sal's Neighbourhood Insurance", 'A small consideration, paid continuously, and nothing untoward happens to the shop. Bricks, mostly.');
+    protectionRow.button.addEventListener('click', () => actions.setProtection(!getState().protection));
+    els.listProtection.append(protectionRow.button);
 
     const lineRows = [];
     D.sockLines.forEach((l, i) => {
@@ -472,7 +478,9 @@
       els.shopDesc.textContent = shop.desc;
       els.shopMeta.textContent = `${shop.basket} ${shop.basket === 1 ? 'sock' : 'socks'} per customer · appeal ×${shop.appeal} · traffic ×${shop.traffic}`;
       els.streetShop.textContent = `${shop.icon} ${shop.name}`;
-      els.streetTraffic.textContent = `${F.fmt(Sim.footTraffic(s) * 60)} people/min pass by · ${F.pct(Sim.interest(s))} come in`;
+      const phase = Sim.dayPhase(s);
+      const tod = Sim.daylight(phase) < 0.5 ? '🌙 night' : Sim.dayMult(s) > 1 ? '🍽️ lunchtime' : '☀️ day';
+      els.streetTraffic.textContent = `${tod} · ${F.fmt(Sim.footTraffic(s) * 60)} people/min pass by · ${F.pct(Sim.interest(s))} come in`;
       els.kpiShop.textContent = shop.name;
 
       const next = Sim.nextShop(s);
@@ -550,14 +558,17 @@
         if (!available && !loan) return;
         shown++;
         if (!loan) {
-          rows.borrow.cost.textContent = 'Borrow ' + F.money(Sim.loanOffer(s, L.id));
-          rows.borrow.qty.textContent = 'due in ' + F.fmtTime(L.term);
+          const offer = Sim.loanOffer(s, L.id);
+          rows.borrow.cost.textContent = (L.laundering ? 'Take ' : 'Borrow ') + F.money(offer);
+          rows.borrow.qty.textContent = L.laundering ? `owe ${F.money(Sim.loanOwed(L.id, offer))} in ${F.fmtTime(L.term)}` : 'due in ' + F.fmtTime(L.term);
           setAffordable(rows.borrow.button, true);
           return;
         }
         const left = loan.due - s.playTime;
         const short = s.money < loan.owed;
-        rows.loan.desc.textContent = `Borrowed ${F.money(loan.principal)}. Grows ${rows.ratePerMin.toFixed(1)}%/min, up to ${F.money(loan.principal * L.cap)}. ${L.terms}`;
+        rows.loan.desc.textContent = L.laundering
+          ? `Sal's cut of the bag. ${L.terms}`
+          : `Borrowed ${F.money(loan.principal)}. Grows ${rows.ratePerMin.toFixed(1)}%/min, up to ${F.money(loan.principal * L.cap)}. ${L.terms}`;
         rows.loan.meta.textContent = left > 0
           ? `Due in ${F.fmtTime(left)}` + (loan.stage > 0 ? ` · already missed ${loan.stage} date${loan.stage === 1 ? '' : 's'}` : '')
           : 'OVERDUE';
@@ -569,6 +580,20 @@
         if (short && left < 60) pressing++;
       });
       els.emptyLenders.hidden = shown > 0;
+      els.dirtyHint.hidden = s.dirty <= 0;
+      if (s.dirty > 0) els.dirtyHint.textContent = `🧺 ${F.money(s.dirty)} of dirty cash still to wash through the tills. Expect a police raid about every ${F.fmtTime(Sim.raidInterval(s))} until it is clean.`;
+      // insurance
+      const canInsure = Sim.protectionAvailable(s) || s.protection;
+      els.protectionHead.hidden = !canInsure;
+      protectionRow.button.hidden = !canInsure;
+      if (canInsure) {
+        const rate = s.protection ? Sim.protectionRate(s) : Sim.assetValue(s) * D.protection.rate;
+        protectionRow.cost.textContent = F.money(rate) + '/s';
+        protectionRow.qty.textContent = s.protection ? 'Paying · click to stop' : 'Click to pay';
+        protectionRow.button.classList.toggle('selected', s.protection);
+        protectionRow.meta.textContent = s.protection ? 'Covered. Sal sends his regards.' : 'Not covered. Sal sends his sympathies in advance.';
+        setAffordable(protectionRow.button, true);
+      }
       return pressing;
     }
 
@@ -579,17 +604,46 @@
       const key = s.events.map((e) => {
         const cost = Sim.resolveCost(s, e.id);
         return e.id + ':' + (e.remaining === null ? '-' : Math.ceil(e.remaining)) + ':' + (cost === null ? '-' : Math.round(cost) + (s.money >= cost ? 'y' : 'n'));
-      }).join('|');
+      }).join('|')
+        + '|' + (s.offer ? `offer:${s.offer.socks}:${Math.ceil(s.offer.expires - s.playTime)}` : '')
+        + '|' + (s.order ? `order:${s.order.filled}/${s.order.socks}:${Math.ceil(s.order.due - s.playTime)}` : '');
       if (key === eventsKey) return;
       eventsKey = key;
       els.events.textContent = '';
+      if (s.offer) {
+        const o = s.offer;
+        const chip = el('div', 'event offer brut');
+        chip.append(el('span', 'event-icon', o.icon));
+        const text = el('span', 'event-text');
+        text.append(el('strong', null, `${o.customer} want ${F.fmtInt(o.socks)} socks`));
+        text.append(el('span', 'event-time', ` · ${o.premium}× price (${F.money(Sim.orderPrice(s, o))} each) · ${F.fmtTime(D.orders.deadline)} to deliver · offer ends in ${F.fmtTime(Math.max(0, Math.ceil(o.expires - s.playTime)))}`));
+        chip.append(text);
+        const yes = el('button', 'brut', 'Accept');
+        yes.type = 'button';
+        yes.addEventListener('click', () => actions.acceptOrder());
+        const no = el('button', 'brut decline', 'Decline');
+        no.type = 'button';
+        no.addEventListener('click', () => actions.declineOrder());
+        chip.append(yes, no);
+        els.events.append(chip);
+      }
+      if (s.order) {
+        const o = s.order;
+        const chip = el('div', 'event order brut');
+        chip.append(el('span', 'event-icon', o.icon));
+        const text = el('span', 'event-text');
+        text.append(el('strong', null, `Order for ${o.customer}: ${F.fmtInt(o.filled)} / ${F.fmtInt(o.socks)} socks`));
+        text.append(el('span', 'event-time', ` · pays ${F.money(o.socks * Sim.orderPrice(s, o))} · due in ${F.fmtTime(Math.max(0, Math.ceil(o.due - s.playTime)))}`));
+        chip.append(text);
+        els.events.append(chip);
+      }
       s.events.forEach((e) => {
         const d = D.events[e.id];
         const chip = el('div', 'event brut');
         chip.append(el('span', 'event-icon', d.icon));
         const text = el('span', 'event-text');
         text.append(el('strong', null, d.name));
-        text.append(el('span', 'event-time', e.remaining === null ? ' · until you settle up' : ` · ${F.fmtTime(Math.ceil(e.remaining))} left`));
+        text.append(el('span', 'event-time', e.remaining === null ? (d.resolve ? ' · until you deal with it' : ' · until you settle up') : ` · ${F.fmtTime(Math.ceil(e.remaining))} left`));
         chip.append(text);
         const cost = Sim.resolveCost(s, e.id);
         if (cost !== null) {
@@ -603,7 +657,7 @@
       });
     }
 
-    const NEWS_ICON = { staff: '🧓', machine: '🔧', delivery: '🚚', research: '🔬', build: '🏗️', money: '💸', trouble: '🚨' };
+    const NEWS_ICON = { staff: '🧓', machine: '🔧', delivery: '🚚', research: '🔬', build: '🏗️', money: '💸', trouble: '🚨', order: '📦' };
     let newsKey = '';
     function refreshNews(s) {
       els.newsSub.textContent = `Wages & maintenance ${F.money(Sim.upkeepRate(s))}/s`
@@ -677,7 +731,9 @@
       els.kpiFactory.textContent = totalDown > 0 ? `${totalDown} unit${totalDown === 1 ? '' : 's'} out of action` : Sim.currentFactory(s).name;
       els.topIncome.textContent = F.money(income) + '/s'
         + (Sim.upkeepRate(s) > 0 ? ` · upkeep ${F.money(Sim.upkeepRate(s))}/s` : '')
-        + (s.loans.length ? ` · debt ${F.money(Sim.totalDebt(s))}` : '');
+        + (s.protection ? ` · insurance ${F.money(Sim.protectionRate(s))}/s` : '')
+        + (s.loans.length ? ` · debt ${F.money(Sim.totalDebt(s))}` : '')
+        + (s.dirty > 0 ? ` · ${F.money(s.dirty)} dirty` : '');
       els.rateDeliver.textContent = F.fmt(delivering) + '/s';
       els.kpiFleet.textContent = `${s.vehicles.length} vehicle${s.vehicles.length === 1 ? '' : 's'} · ${F.fmt(Sim.throughputRate(s))}/s max`;
       els.rateSales.textContent = F.fmt(sales) + '/s';
@@ -692,6 +748,8 @@
       els.statTime.textContent = F.fmtTime(s.playTime);
       els.statRetire.textContent = s.retirements;
       els.statBankrupt.textContent = s.bankruptcies;
+      els.statOrders.textContent = F.fmtInt(s.ordersDone);
+      els.statFines.textContent = F.money(s.lifetimeFines);
 
       refreshKnit(s);
       refreshWarning(s, prod);

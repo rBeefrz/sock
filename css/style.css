@@ -191,6 +191,9 @@ button.brut:disabled { cursor: not-allowed; opacity: 0.55; }
 .event-icon { font-size: 1.4rem; line-height: 1; }
 .event-time { font-size: 0.8rem; opacity: 0.75; white-space: nowrap; }
 .event button { padding: 4px 10px; background: var(--yellow); box-shadow: var(--shadow-sm); font-size: 0.8rem; white-space: nowrap; }
+.event.offer { background: var(--cyan); }
+.event.order { background: var(--lime); }
+.event button.decline { background: var(--paper); }
 
 .quick {
   display: flex;

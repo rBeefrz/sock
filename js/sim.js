@@ -10,7 +10,7 @@
 })(this, function (D) {
   'use strict';
 
-  const SAVE_VERSION = 3;
+  const SAVE_VERSION = 5;
 
   function newVehicle(typeId) {
     return { type: typeId, phase: 'loading', progress: 0, load: 0, timer: 0 };
@@ -39,7 +39,17 @@
       lifetimeLost: 0,        // socks lost in delivery mishaps, raids and seizures, ever
       lifetimeSkimmed: 0,     // socks skimmed off production by uninvited staff, ever
       loans: [],              // [{ lender, principal, owed, due, stage }] due is a playTime
-      events: [],             // [{ id, remaining }] trouble in progress; remaining null = until resolved
+      events: [],             // [{ id, remaining, guarded?, vars? }] trouble in progress; remaining null = until resolved
+      cooldowns: {},          // { eventId: seconds } before a self-spawning event may return
+      resolved: {},           // { eventId: times bought off } (buyout prices climb)
+      serenade: null,         // id of the track Sock Radio drifted onto by itself (not saved)
+      offer: null,            // { customer, icon, socks, premium, expires } a bulk order on the table
+      order: null,            // { customer, icon, socks, filled, premium, due } one being filled
+      ordersDone: 0,
+      protection: false,      // paying Sal's Neighbourhood Insurance
+      protectionOffered: false,
+      dirty: 0,               // laundered cash not yet washed through the tills
+      lifetimeFines: 0,
       outrage: 0,             // how upset the devout are (points, see D.ruin)
       grumble: 0,             // how close the grannies are to striking (points, see D.ruin)
       upgrades: {},
@@ -252,15 +262,52 @@
 
   // ---- production -------------------------------------------------------
 
-  function producerRateEach(s, id) {
-    const p = producerById[id];
-    return p.baseRate * mult(s, 'producer', p) * threadBonus(s);
+  // The track Sock Radio drifted onto, and who in the factory likes it.
+  function serenadeFor(s) {
+    return s.serenade ? D.radio.serenades.find((x) => x.track === s.serenade) || null : null;
   }
 
-  // Is every unit of this type stopped by a strike?
+  function serenadeMult(s, p) {
+    const e = serenadeFor(s);
+    return e && targets(e, p) ? e.mult : 1;
+  }
+
+  // Units that would notice this track.
+  function serenadeAudience(s, entry) {
+    return D.producers.reduce((acc, p) => acc + (targets(entry, p) ? s.producers[p.id] : 0), 0);
+  }
+
+  // Tell the sim which track the radio drifted onto (null when it is off,
+  // or when the player tuned it). Hidden mechanic: only a drifted track
+  // gets anyone working faster.
+  function setSerenade(s, trackId) {
+    trackId = trackId || null;
+    if (s.serenade === trackId) return false;
+    const before = serenadeFor(s);
+    s.serenade = trackId;
+    const after = serenadeFor(s);
+    if (before && serenadeAudience(s, before) > 0) addNews(s, 'staff', before.end);
+    if (after && serenadeAudience(s, after) > 0) addNews(s, 'staff', after.start);
+    return true;
+  }
+
+  function producerRateEach(s, id) {
+    const p = producerById[id];
+    return p.baseRate * mult(s, 'producer', p) * threadBonus(s) * serenadeMult(s, p);
+  }
+
+  // Has something (an inspector) shut the whole factory?
+  function factoryClosed(s) {
+    return s.events.some((e) => { const d = eventDef(e); return !!(d && d.closeFactory); });
+  }
+
+  // Is every unit of this type stopped, by a strike or a closure?
   function onStrike(s, id) {
     const care = producerById[id].care.id;
-    return s.events.some((e) => D.events[e.id] && D.events[e.id].strikeCare === care);
+    return factoryClosed(s) || s.events.some((e) => {
+      const d = eventDef(e);
+      return d && d.strikeCare === care;
+    });
   }
 
   // Socks per second this type makes right now (units on a break excluded).
@@ -283,7 +330,7 @@
 
   // Share of production quietly carried off by uninvited staff.
   function skimFraction(s) {
-    return Math.min(0.9, s.events.reduce((acc, e) => acc + ((D.events[e.id] && D.events[e.id].skim) || 0), 0));
+    return Math.min(0.9, s.events.reduce((acc, e) => acc + ((eventDef(e) && eventDef(e).skim) || 0), 0));
   }
 
   // Hand knitting: a click starts one sock, which takes knitTime seconds.
@@ -613,16 +660,72 @@
     return true;
   }
 
+  // Is there someone on the shop door? Trouble with a `guarded` variant
+  // then starts in that softer form.
+  function hasSecurity(s) {
+    return activeEffects(s, 'security').length > 0;
+  }
+
+  // The data for an event as it is actually running: the guarded variant's
+  // fields laid over the base ones when it started under security.
+  function eventDef(e) {
+    const d = D.events[e.id];
+    if (!d) return null;
+    return e.guarded && d.guarded ? Object.assign({}, d, d.guarded) : d;
+  }
+
   // Product of one numeric field across active events (1 when none set it).
   function eventMult(s, key) {
     return s.events.reduce((acc, e) => {
-      const d = D.events[e.id];
+      const d = eventDef(e);
       return d && typeof d[key] === 'number' ? acc * d[key] : acc;
     }, 1);
   }
 
-  function footTraffic(s) {
+  // ---- time of day --------------------------------------------------------
+
+  function dayPhase(s) {
+    return ((s.playTime / D.day.length) + D.day.offset) % 1;
+  }
+
+  // 0 at night, 1 in full daylight, with short dawn and dusk ramps.
+  function daylight(phase) {
+    const k = (p, a, b) => Math.min(1, Math.max(0, (p - a) / (b - a)));
+    if (phase < 0.5) return k(phase, 0.22, 0.32);
+    return 1 - k(phase, 0.72, 0.82);
+  }
+
+  // Traffic multiplier at one moment: quiet after dark unless the shop has
+  // a late licence, busy at lunchtime.
+  function dayTrafficAt(s, phase) {
+    if (daylight(phase) < 0.5) return Math.min(1, D.day.nightTraffic * mult(s, 'night'));
+    if (phase >= D.day.lunchFrom && phase < D.day.lunchTo) return D.day.lunchTraffic;
+    return 1;
+  }
+
+  function dayMult(s) {
+    return dayTrafficAt(s, dayPhase(s));
+  }
+
+  // Average of the time-of-day multiplier over the next dt seconds, for
+  // long expected-mode steps that span nights and lunchtimes.
+  function dayMultOver(s, dt) {
+    if (dt < 60) return dayMult(s);
+    const n = 24;
+    let acc = 0;
+    for (let i = 0; i < n; i++) {
+      const at = s.playTime + dt * (i + 0.5) / n;
+      acc += dayTrafficAt(s, ((at / D.day.length) + D.day.offset) % 1);
+    }
+    return acc / n;
+  }
+
+  function baseFootTraffic(s) {
     return D.baseTraffic * marketingMult(s) * mult(s, 'demand') * currentShop(s).traffic * eventMult(s, 'traffic');
+  }
+
+  function footTraffic(s) {
+    return baseFootTraffic(s) * dayMult(s);
   }
 
   function interest(s) {
@@ -668,32 +771,57 @@
     return s.events.some((e) => e.id === id);
   }
 
+  // The event's announcement text with its own words filled in.
+  function eventText(e, key) {
+    const d = eventDef(e);
+    return d && d[key] ? fill(d[key], e.vars || {}) : null;
+  }
+
   // Start an event (or top its timer back up if already running). `out` is
-  // the tick result, so the caller can announce it.
-  function startEvent(s, id, out) {
-    const d = D.events[id];
-    if (!d) return false;
+  // the tick result, so the caller can announce it. `vars` fill the event's
+  // text templates and are kept on the instance.
+  function startEvent(s, id, out, vars) {
+    const base = D.events[id];
+    if (!base) return false;
+    const guarded = !!base.guarded && hasSecurity(s);
+    const d = guarded ? Object.assign({}, base, base.guarded) : base;
     const running = s.events.find((e) => e.id === id);
     if (running) {
-      if (d.duration) running.remaining = d.duration;
+      const rd = eventDef(running);
+      if (rd.duration) running.remaining = rd.duration;
       return false;
     }
-    s.events.push({ id, remaining: d.duration || null });
+    const e = { id, remaining: d.duration || null, guarded, vars: vars || {} };
     if (d.stealShelf) {
       const taken = Math.floor(s.socks * d.stealShelf);
       s.socks -= taken;
       s.lifetimeLost += taken;
     }
-    addNews(s, 'trouble', d.text);
+    if (d.fine) {
+      const fine = Math.min(s.money, Math.max(d.fineMin || 0, s.money * d.fine));
+      s.money -= fine;
+      s.lifetimeFines += fine;
+      e.vars.fine = fmtMoney(fine);
+    }
+    s.events.push(e);
+    addNews(s, 'trouble', eventText(e, 'text'));
     if (out) out.events.push(id);
     return true;
+  }
+
+  // A self-spawning event rests after it ends.
+  function restEvent(s, id) {
+    const d = D.events[id];
+    if (d && d.spawn && d.spawn.cooldown) s.cooldowns[id] = d.spawn.cooldown;
   }
 
   function endEvent(s, id, text) {
     const i = s.events.findIndex((e) => e.id === id);
     if (i < 0) return false;
+    const e = s.events[i];
     s.events.splice(i, 1);
-    if (text) addNews(s, 'trouble', text);
+    restEvent(s, id);
+    if (text) addNews(s, 'trouble', fill(text, e.vars || {}));
     return true;
   }
 
@@ -703,14 +831,44 @@
       if (e.remaining === null) continue;
       e.remaining -= dt;
       if (e.remaining > 0) continue;
-      const d = D.events[e.id];
       s.events.splice(i, 1);
-      if (d && d.endText) addNews(s, 'trouble', d.endText);
+      restEvent(s, e.id);
+      const text = eventText(e, 'endText');
+      if (text) addNews(s, 'trouble', text);
     }
+    Object.keys(s.cooldowns).forEach((id) => {
+      s.cooldowns[id] -= dt;
+      if (s.cooldowns[id] <= 0) delete s.cooldowns[id];
+    });
     // the uninvited granny stays exactly as long as Sal is owed money
     if (eventActive(s, 'mafiaGranny') && !s.loans.some((l) => lenderById[l.lender] && lenderById[l.lender].escalation)) {
       endEvent(s, 'mafiaGranny', D.events.mafiaGranny.endText);
     }
+  }
+
+  // Chance that something with this average interval happens within dt.
+  function chanceOver(dt, interval) {
+    return 1 - Math.exp(-dt / interval);
+  }
+
+  // Do this event's spawn conditions hold right now?
+  function spawnAllowed(s, d) {
+    const req = (d.spawn && d.spawn.requires) || {};
+    if (req.shopLevel !== undefined && s.shopLevel < req.shopLevel) return false;
+    if (req.factoryLevel !== undefined && s.factoryLevel < req.factoryLevel) return false;
+    if (req.protection !== undefined && !!s.protection !== req.protection) return false;
+    if ((req.research || []).some((id) => !researchDone(s, id))) return false;
+    return true;
+  }
+
+  // Trouble that rolls itself in. Live mode only, like outages.
+  function rollTrouble(s, dt, rng, out) {
+    Object.keys(D.events).forEach((id) => {
+      const d = D.events[id];
+      if (!d.spawn || eventActive(s, id) || s.cooldowns[id] > 0 || !spawnAllowed(s, d)) return;
+      if (rng() >= chanceOver(dt, d.spawn.interval)) return;
+      startEvent(s, id, out);
+    });
   }
 
   // What it costs to buy an event off right now, or null if it cannot be.
@@ -723,6 +881,7 @@
     if (r.wagesSeconds) {
       cost = D.producers.reduce((acc, p) => acc + (p.care.id === 'wages' ? s.producers[p.id] * p.upkeep : 0), 0) * r.wagesSeconds;
     }
+    if (r.assetFraction) cost = assetValue(s) * r.assetFraction * Math.pow(r.growth || 1, s.resolved[id] || 0);
     return Math.max(r.min || 0, cost);
   }
 
@@ -736,8 +895,130 @@
       s.grumble = 0;
     }
     if (d.resolve.moneyFraction) s.outrage = 0;
+    s.resolved[id] = (s.resolved[id] || 0) + 1;
     endEvent(s, id, d.resolve.text);
     return true;
+  }
+
+  // ---- bulk orders ---------------------------------------------------------
+
+  function orderPrice(s, order) {
+    return basePrice(s) * priceMult(s) * order.premium;
+  }
+
+  function makeOffer(s, rng, out) {
+    const O = D.orders;
+    const c = O.customers[Math.min(O.customers.length - 1, Math.floor(rng() * O.customers.length))];
+    const socks = Math.max(O.minSocks, Math.round(demandRate(s) * O.sizeSeconds));
+    const premium = Math.round((O.premiumMin + rng() * (O.premiumMax - O.premiumMin)) * 10) / 10;
+    s.offer = { customer: c.name, icon: c.icon, socks, premium, expires: s.playTime + O.offerWindow };
+    addNews(s, 'order', `${c.icon} ${cap(c.name)} want ${socks} socks at ${premium}× the base price, delivered within ${fmtSeconds(O.deadline)}. The offer stands for ${fmtSeconds(O.offerWindow)}.`);
+    if (out) out.offer = true;
+  }
+
+  function cap(text) {
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  function rollOffer(s, dt, rng, out) {
+    if (s.offer || s.order || s.shopLevel < D.orders.shopLevel) return;
+    if (rng() >= chanceOver(dt, D.orders.interval)) return;
+    makeOffer(s, rng, out);
+  }
+
+  function acceptOrder(s) {
+    if (!s.offer || s.order) return false;
+    const o = s.offer;
+    s.offer = null;
+    s.order = { customer: o.customer, icon: o.icon, socks: o.socks, filled: 0, premium: o.premium, due: s.playTime + D.orders.deadline };
+    addNews(s, 'order', `${o.icon} Order accepted: ${o.socks} socks for ${cap(o.customer)}, due in ${fmtSeconds(D.orders.deadline)}. They come off the shelves as they arrive.`);
+    return true;
+  }
+
+  function declineOrder(s) {
+    if (!s.offer) return false;
+    addNews(s, 'order', `${s.offer.icon} You turned ${cap(s.offer.customer)} away.`);
+    s.offer = null;
+    return true;
+  }
+
+  // Socks come off the shelves into the order; paid on completion at the
+  // premium, or at base price for what arrived if the deadline passes.
+  function tickOrders(s, dt, out) {
+    if (s.offer && s.playTime >= s.offer.expires) {
+      addNews(s, 'order', `${s.offer.icon} ${cap(s.offer.customer)} got tired of waiting and went elsewhere.`);
+      s.offer = null;
+    }
+    const o = s.order;
+    if (!o) return;
+    const take = Math.min(Math.floor(s.socks), o.socks - o.filled);
+    if (take > 0) {
+      s.socks -= take;
+      o.filled += take;
+      s.lifetimeSold += take;
+    }
+    if (o.filled >= o.socks) {
+      const earned = o.filled * orderPrice(s, o);
+      earn(s, earned);
+      s.ordersDone += 1;
+      s.order = null;
+      addNews(s, 'order', `${o.icon} ${cap(o.customer)} collected their ${o.socks} socks and paid ${fmtMoney(earned)}.`);
+      if (out) out.orderDone = earned;
+    } else if (s.playTime >= o.due) {
+      const earned = o.filled * basePrice(s) * priceMult(s);
+      if (earned > 0) earn(s, earned);
+      s.order = null;
+      addNews(s, 'order', `${o.icon} The deadline passed with ${o.socks - o.filled} socks still owed. ${cap(o.customer)} paid ${fmtMoney(earned)} for what there was, at the ordinary price.`);
+      startEvent(s, 'letdown', out, { customer: o.customer });
+    }
+  }
+
+  // ---- Sal's insurance -----------------------------------------------------
+
+  function protectionAvailable(s) {
+    return s.shopLevel >= D.protection.shopLevel;
+  }
+
+  function protectionRate(s) {
+    return s.protection ? assetValue(s) * D.protection.rate : 0;
+  }
+
+  function setProtection(s, on) {
+    on = !!on;
+    if (on && !protectionAvailable(s)) return false;
+    if (s.protection === on) return false;
+    s.protection = on;
+    addNews(s, 'money', on ? 'You are paying Sal\'s Neighbourhood Insurance. Nothing will happen to the shop. Probably.' : 'You stopped paying Sal\'s insurance. He says he understands.');
+    return true;
+  }
+
+  function tickProtection(s, dt) {
+    if (!s.protectionOffered && protectionAvailable(s)) {
+      s.protectionOffered = true;
+      addNews(s, 'trouble', D.protection.offerText);
+    }
+    const cost = protectionRate(s) * dt;
+    if (cost <= 0) return;
+    if (s.money >= cost) { s.money -= cost; return; }
+    s.protection = false;
+    addNews(s, 'money', D.protection.lapseText);
+  }
+
+  // ---- dirty money ---------------------------------------------------------
+
+  // Expected seconds between police raids right now, or Infinity.
+  function raidInterval(s) {
+    return s.dirty > 0 ? D.laundering.raidInterval : Infinity;
+  }
+
+  function rollRaid(s, dt, rng, out) {
+    if (s.dirty <= 0 || eventActive(s, 'police')) return;
+    if (rng() >= chanceOver(dt, D.laundering.raidInterval)) return;
+    const fine = Math.min(s.money, s.dirty * D.laundering.fineMult);
+    s.money -= fine;
+    s.lifetimeFines += fine;
+    s.dirty = 0;
+    startEvent(s, 'police', out, { fine: fmtMoney(fine) });
   }
 
   // ---- trouble: outrage and grumbling -------------------------------------
@@ -833,6 +1114,12 @@
     return Math.max(L.minAmount, Math.round(assetValue(s) * L.assetFraction));
   }
 
+  // What you will owe back for an offer of `amount` from this lender.
+  function loanOwed(lenderId, amount) {
+    const L = lenderById[lenderId];
+    return amount * (1 - (L.cut || 0));
+  }
+
   function canBorrow(s, lenderId) {
     return lenderAvailable(s, lenderId) && !loanFor(s, lenderId);
   }
@@ -841,9 +1128,15 @@
     if (!canBorrow(s, lenderId)) return 0;
     const L = lenderById[lenderId];
     const amount = loanOffer(s, lenderId);
+    const owed = loanOwed(lenderId, amount);
     s.money += amount; // borrowed money is not earnings
-    s.loans.push({ lender: lenderId, principal: amount, owed: amount, due: s.playTime + L.term, stage: 0 });
-    addNews(s, 'money', `${L.name} lent you ${fmtMoney(amount)}. Due in ${fmtSeconds(L.term)}.`);
+    s.loans.push({ lender: lenderId, principal: owed, owed, due: s.playTime + L.term, stage: 0 });
+    if (L.laundering) {
+      s.dirty += amount;
+      addNews(s, 'money', `A sports bag with ${fmtMoney(amount)} in it arrived from ${L.name}. ${fmtMoney(owed)} goes back in ${fmtSeconds(L.term)}. Until it has been through the tills it is dirty money.`);
+    } else {
+      addNews(s, 'money', `${L.name} lent you ${fmtMoney(amount)}. Due in ${fmtSeconds(L.term)}.`);
+    }
     return amount;
   }
 
@@ -935,6 +1228,14 @@
       addNews(s, 'money', `${L.name} collected ${fmtMoney(pay)} in full.`);
       return;
     }
+    // the first time, security can stall the bailiffs at the door for a while
+    const stall = D.events.bailiffs.guarded && D.events.bailiffs.guarded.grace;
+    if (stall && hasSecurity(s) && l.stage === 0) {
+      l.stage = 1;
+      l.due += stall;
+      startEvent(s, 'bailiffs', out);
+      return;
+    }
     const taken = seizeAssets(s, l.owed);
     l.owed -= taken.value;
     startEvent(s, 'bailiffs', out);
@@ -1006,6 +1307,8 @@
       lifetimeDelivered: s.lifetimeDelivered,
       lifetimeLost: s.lifetimeLost,
       lifetimeSkimmed: s.lifetimeSkimmed,
+      lifetimeFines: s.lifetimeFines,
+      ordersDone: s.ordersDone,
       customers: s.customers,
       clicks: s.clicks,
       playTime: s.playTime,
@@ -1026,6 +1329,7 @@
   function earn(s, amount) {
     s.money += amount;
     s.lifetimeMoney += amount;
+    if (s.dirty > 0) s.dirty = Math.max(0, s.dirty - amount); // honest sales wash Sal's cash clean
   }
 
   // Advance the world by dt seconds.
@@ -1038,12 +1342,13 @@
   function tick(s, dt, mode, rng) {
     mode = mode || 'expected';
     rng = rng || Math.random;
-    const out = { produced: 0, knitted: 0, delivered: 0, sold: 0, earned: 0, researchDone: null, events: [], ruined: false };
+    const out = { produced: 0, knitted: 0, delivered: 0, sold: 0, earned: 0, researchDone: null, events: [], ruined: false, offer: false, orderDone: 0 };
     if (!(dt > 0)) return out;
     const bankruptcies = s.bankruptcies;
 
     out.knitted = progressKnit(s, dt);
     payUpkeep(s, dt);
+    tickProtection(s, dt);
     if (mode === 'live') {
       tickOutages(s, dt);
       rollOutages(s, dt, rng);
@@ -1071,16 +1376,22 @@
       s.socks += moved;
       s.lifetimeDelivered += moved;
       out.delivered = moved;
-      const r = customerVisit(s, footTraffic(s) * interest(s) * dt);
+      const r = customerVisit(s, baseFootTraffic(s) * dayMultOver(s, dt) * interest(s) * dt);
       out.sold = r.sold;
       out.earned = r.earned;
     }
     s.playTime += dt;
 
     tickEvents(s, dt);      // before anything that can start a new event this step
+    tickOrders(s, dt, out);
     tickLoans(s, dt, out);
     tickOutrage(s, dt, out);
     tickGrumble(s, dt, out);
+    rollRaid(s, dt, rng, out);
+    if (mode === 'live') {
+      rollTrouble(s, dt, rng, out);
+      rollOffer(s, dt, rng, out);
+    }
     out.ruined = s.bankruptcies > bankruptcies;
     return out;
   }
@@ -1161,6 +1472,8 @@
       lifetimeDelivered: s.lifetimeDelivered,
       lifetimeLost: s.lifetimeLost,
       lifetimeSkimmed: s.lifetimeSkimmed,
+      lifetimeFines: s.lifetimeFines,
+      ordersDone: s.ordersDone,
       customers: s.customers,
       clicks: s.clicks,
       playTime: s.playTime,
@@ -1241,6 +1554,20 @@
     s.loans.forEach((l) => { if (!finite(l.principal)) l.principal = l.owed; if (!finite(l.stage)) l.stage = 0; });
     if (!Array.isArray(s.events)) s.events = [];
     s.events = s.events.filter((e) => e && D.events[e.id] && (e.remaining === null || (finite(e.remaining) && e.remaining > 0)));
+    s.events.forEach((e) => { e.guarded = !!e.guarded; if (!e.vars || typeof e.vars !== 'object') e.vars = {}; });
+    s.serenade = null; // whatever the radio was doing, it is not doing it now
+    if (!s.cooldowns || typeof s.cooldowns !== 'object') s.cooldowns = {};
+    if (!s.resolved || typeof s.resolved !== 'object') s.resolved = {};
+    Object.keys(s.cooldowns).forEach((id) => { if (!D.events[id] || !(s.cooldowns[id] > 0)) delete s.cooldowns[id]; });
+    const offerOk = (o) => o && typeof o === 'object' && typeof o.customer === 'string' && finite(o.socks) && o.socks > 0 && finite(o.premium);
+    if (!offerOk(s.offer) || !finite(s.offer.expires)) s.offer = null;
+    if (!offerOk(s.order) || !finite(s.order.due)) s.order = null;
+    else if (!finite(s.order.filled)) s.order.filled = 0;
+    if (!finite(s.ordersDone)) s.ordersDone = 0;
+    if (!finite(s.dirty) || s.dirty < 0) s.dirty = 0;
+    if (!finite(s.lifetimeFines)) s.lifetimeFines = 0;
+    s.protection = !!s.protection;
+    s.protectionOffered = !!s.protectionOffered;
     if (!finite(s.outrage)) s.outrage = 0;
     if (!finite(s.grumble)) s.grumble = 0;
     if (!finite(s.bankruptcies)) s.bankruptcies = 0;
@@ -1270,7 +1597,11 @@
     productionRate,
     expectedProductionRate,
     onStrike,
+    factoryClosed,
     skimFraction,
+    setSerenade,
+    serenadeMult,
+    serenadeFor,
     // upkeep and outages
     upkeepLevel,
     setUpkeep,
@@ -1321,6 +1652,9 @@
     shopUnlocked,
     buyShop,
     footTraffic,
+    dayPhase,
+    daylight,
+    dayMult,
     interest,
     basketSize,
     demandRate,
@@ -1331,17 +1665,31 @@
     threadBonus,
     // trouble
     eventActive,
+    eventDef,
+    hasSecurity,
     startEvent,
     endEvent,
     resolveCost,
     resolveEvent,
+    eventText,
+    spawnAllowed,
     grumbleRate,
     wageWorkers,
+    // bulk orders
+    orderPrice,
+    acceptOrder,
+    declineOrder,
+    // insurance and dirty money
+    protectionAvailable,
+    protectionRate,
+    setProtection,
+    raidInterval,
     // loans
     assetValue,
     lenderAvailable,
     loanFor,
     loanOffer,
+    loanOwed,
     canBorrow,
     takeLoan,
     repayLoan,

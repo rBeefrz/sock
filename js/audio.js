@@ -190,6 +190,7 @@
     let nextTime = 0;
     let tier = -1;
     let loops = 0;
+    let drifted = false; // the radio moved to this track by itself, nobody picked it
 
     function savePrefs() {
       try { localStorage.setItem(KEY, JSON.stringify(prefs)); } catch (e) { /* ignore */ }
@@ -391,7 +392,7 @@
         if (step >= trackSteps()) {
           step = 0;
           loops += 1;
-          if (loops * trackSeconds() >= MINUTES_PER_TRACK * 60) { next(); return; }
+          if (loops * trackSeconds() >= MINUTES_PER_TRACK * 60) { select(prefs.track + 1, true); return; }
         }
       }
     }
@@ -426,8 +427,10 @@
       if (master) master.gain.setTargetAtTime(prefs.vol, ctx.currentTime, 0.05);
     }
 
-    function select(index) {
+    // `auto` marks a change the radio made on its own rather than a button press.
+    function select(index, auto) {
       if (ctx && prefs.on) staticBurst();
+      drifted = !!auto;
       loadTrack(index);
       if (!prefs.on) setEnabled(true);
       else start();
@@ -452,8 +455,12 @@
         min: prefs.min,
         index: prefs.track,
         count: TRACKS.length,
+        id: track.id,
         name: track.name,
         tag: track.tag,
+        // audible right now, and the radio drifted here rather than being tuned
+        live: prefs.on && !!timer && !!ctx && ctx.state === 'running',
+        drifted,
         layers: Object.keys(track.layers).map((k) => ({ label: track.layers[k].label, active: track.layers[k].tier <= t })),
       };
     }
