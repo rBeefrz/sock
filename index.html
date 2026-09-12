@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sock Tycoon</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧦</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <button type="button" class="brut menu-toggle" id="menu-toggle" aria-label="Open menu">☰ MENU <span class="badge" id="menu-badge" hidden>0</span></button>
+    <h1>🧦 SOCK TYCOON</h1>
+    <div class="topbar-stats">
+      <span id="top-threads" class="threads" title="Heirloom threads" hidden>🧵 0</span>
+    </div>
+  </header>
+
+  <section class="scenes">
+    <div class="scene brut">
+      <canvas id="factory" aria-label="Your factory"></canvas>
+      <div class="scene-caption">
+        <span id="factory-caption">🛖 Shack</span>
+        <span id="factory-caption-2">0 waiting · 0 in transit</span>
+      </div>
+    </div>
+    <div class="scene brut scene-street">
+      <canvas id="street" aria-label="Your shop on the high street"></canvas>
+      <div class="scene-caption">
+        <span id="street-shop">Corner Kiosk</span>
+        <span id="street-traffic">0 people/min pass by · 0% come in</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="kpis">
+    <button id="knit" class="brut knit-button" type="button">
+      <div class="knit-fill" id="knit-fill"></div>
+      <div class="knit-text">
+        <span class="knit-icon">🧦</span>
+        <span class="knit-label" id="knit-label">KNIT A SOCK</span>
+        <span class="knit-sub" id="knit-sub">2.0s per sock</span>
+      </div>
+    </button>
+    <div class="kpi brut kpi-yellow"><div class="kpi-label">Cash</div><div class="kpi-value" id="money">$0.00</div><div class="kpi-sub" id="top-income">$0.00/s</div></div>
+    <div class="kpi brut kpi-cyan"><div class="kpi-label">Producing</div><div class="kpi-value" id="rate-prod">0/s</div><div class="kpi-sub" id="kpi-factory">Shack</div></div>
+    <div class="kpi brut kpi-orange"><div class="kpi-label">Delivering</div><div class="kpi-value" id="rate-deliver">0/s</div><div class="kpi-sub" id="kpi-fleet">1 vehicle</div></div>
+    <div class="kpi brut kpi-pink"><div class="kpi-label">Selling</div><div class="kpi-value" id="rate-sales">0/s</div><div class="kpi-sub" id="rate-price">$1.00 each</div></div>
+    <div class="kpi brut kpi-lime"><div class="kpi-label">Customers</div><div class="kpi-value" id="rate-customers">0</div><div class="kpi-sub" id="kpi-shop">Corner Kiosk</div></div>
+    <div class="kpi brut kpi-purple"><div class="kpi-label">On shelves</div><div class="kpi-value" id="socks">0</div><div class="kpi-sub" id="stock-line">0 at factory · 0 in transit</div></div>
+  </section>
+
+  <div id="stock-warning" class="warning brut" hidden></div>
+  <div id="events" class="events"></div>
+  <div class="quick" id="quick"></div>
+
+  <section class="news brut">
+    <div class="news-head"><h2>News</h2><span class="news-sub" id="news-sub">Wages $0.00/s</span></div>
+    <ul class="news-list" id="news-list"></ul>
+    <p class="empty" id="news-empty">Nothing has happened yet. Knit a sock.</p>
+  </section>
+
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer brut" id="drawer" hidden aria-label="Game menu">
+    <div class="drawer-head">
+      <strong>MENU</strong>
+      <button type="button" class="brut drawer-close" id="drawer-close" aria-label="Close menu">✕</button>
+    </div>
+    <nav class="drawer-nav" id="drawer-nav">
+      <button type="button" class="nav-item active" data-section="machines">🧓 Machines</button>
+      <button type="button" class="nav-item" data-section="research">🔬 Research <span class="badge" id="badge-research" hidden>0</span></button>
+      <button type="button" class="nav-item" data-section="fleet">🚚 Fleet</button>
+      <button type="button" class="nav-item" data-section="upgrades">⬆️ Upgrades <span class="badge" id="badge-upgrades" hidden>0</span></button>
+      <button type="button" class="nav-item" data-section="marketing">📣 Marketing</button>
+      <button type="button" class="nav-item" data-section="factory">🏭 Factory <span class="badge" id="badge-factory" hidden>!</span></button>
+      <button type="button" class="nav-item" data-section="shop">🏪 Shop <span class="badge" id="badge-shop" hidden>!</span></button>
+      <button type="button" class="nav-item" data-section="product">🧦 Product</button>
+      <button type="button" class="nav-item" data-section="pricing">💲 Pricing</button>
+      <button type="button" class="nav-item" data-section="bank">🏦 Bank <span class="badge" id="badge-bank" hidden>0</span></button>
+      <button type="button" class="nav-item" data-section="retire">🧵 Retirement</button>
+      <button type="button" class="nav-item" data-section="save">💾 Save &amp; stats</button>
+      <button type="button" class="nav-item" data-section="scenarios">🧪 Test saves</button>
+    </nav>
+
+    <div class="drawer-content">
+      <section class="drawer-section active" data-section="machines">
+        <h2>Machines</h2>
+        <div class="qty-row">
+          <span>Buy</span>
+          <div class="qty-buttons" id="qty-buttons">
+            <button type="button" class="brut qty active" data-qty="1">1</button>
+            <button type="button" class="brut qty" data-qty="10">10</button>
+            <button type="button" class="brut qty" data-qty="max">Max</button>
+          </div>
+        </div>
+        <div class="item-list" id="list-producers"></div>
+        <p class="empty" id="empty-producers">No machines yet. Upgrade the factory to a Granny Cottage, then research Knitting Granny Blueprints.</p>
+      </section>
+
+      <section class="drawer-section" data-section="research">
+        <h2>Research</h2>
+        <div class="research-active brut" id="research-active" hidden>
+          <div class="research-active-title">Researching <strong id="research-active-name"></strong> <span id="research-active-time"></span></div>
+          <div class="progress"><div class="progress-bar" id="research-progress-bar"></div></div>
+        </div>
+        <p class="blurb">Research costs money and takes time. One project at a time. Bigger factories and shops unlock more.</p>
+        <div class="item-list" id="list-research"></div>
+        <p class="empty" id="empty-research" hidden>Everything has been researched. Science is complete.</p>
+      </section>
+
+      <section class="drawer-section" data-section="fleet">
+        <h2>Fleet</h2>
+        <p class="blurb" id="fleet-summary"></p>
+        <div class="item-list" id="list-fleet"></div>
+      </section>
+
+      <section class="drawer-section" data-section="upgrades">
+        <h2>Upgrades</h2>
+        <div class="item-list" id="list-upgrades"></div>
+        <p class="empty" id="empty-upgrades">Nothing to buy yet. Own more machines to unlock upgrades.</p>
+      </section>
+
+      <section class="drawer-section" data-section="marketing">
+        <h2>Marketing</h2>
+        <p class="blurb">Marketing raises foot traffic past your shop. If shelves are full, this is where to spend.</p>
+        <div class="item-list" id="list-marketing"></div>
+        <p class="empty" id="empty-marketing" hidden>The whole solar system knows about your socks.</p>
+      </section>
+
+      <section class="drawer-section" data-section="factory">
+        <h2>Factory</h2>
+        <div class="product-card brut">
+          <div class="product-icon" id="factory-icon">🛖</div>
+          <div>
+            <div class="product-name" id="factory-name">Shack</div>
+            <div class="product-desc" id="factory-desc"></div>
+            <div class="product-price" id="factory-meta"></div>
+          </div>
+        </div>
+        <button type="button" class="item item-line" id="btn-factory">
+          <div class="item-icon" id="next-factory-icon">🏡</div>
+          <div class="item-body">
+            <div class="item-title">Upgrade to <span id="next-factory-name">Granny Cottage</span></div>
+            <div class="item-desc" id="next-factory-desc"></div>
+            <div class="item-meta" id="next-factory-req"></div>
+          </div>
+          <div class="item-buy"><div class="item-cost" id="next-factory-cost">$40</div></div>
+        </button>
+        <div class="progress" id="factory-progress"><div class="progress-bar" id="factory-progress-bar"></div></div>
+      </section>
+
+      <section class="drawer-section" data-section="shop">
+        <h2>Shop</h2>
+        <div class="product-card brut">
+          <div class="product-icon" id="shop-icon">🛖</div>
+          <div>
+            <div class="product-name" id="shop-name">Corner Kiosk</div>
+            <div class="product-desc" id="shop-desc"></div>
+            <div class="product-price" id="shop-meta"></div>
+          </div>
+        </div>
+        <button type="button" class="item item-line" id="btn-shop">
+          <div class="item-icon" id="next-shop-icon">🏪</div>
+          <div class="item-body">
+            <div class="item-title">Upgrade to <span id="next-shop-name">Sock Shop</span></div>
+            <div class="item-desc" id="next-shop-desc"></div>
+            <div class="item-meta" id="next-shop-req"></div>
+          </div>
+          <div class="item-buy"><div class="item-cost" id="next-shop-cost">$250</div></div>
+        </button>
+        <div class="progress" id="shop-progress"><div class="progress-bar" id="shop-progress-bar"></div></div>
+      </section>
+
+      <section class="drawer-section" data-section="product">
+        <h2>Product</h2>
+        <p class="blurb">Pick which sock is on sale. New patterns come from research.</p>
+        <div class="item-list" id="list-lines"></div>
+      </section>
+
+      <section class="drawer-section" data-section="pricing">
+        <h2>Pricing</h2>
+        <label class="slider-label" for="markup">
+          Markup <strong id="markup-label">100%</strong>
+        </label>
+        <input type="range" id="markup" min="50" max="200" step="5" value="100">
+        <div class="slider-ends"><span>Cheap, sells fast</span><span>Pricey, sells slow</span></div>
+        <dl class="rates">
+          <div><dt>Sells for</dt><dd id="markup-price">$1.00</dd></div>
+          <div><dt>Foot traffic</dt><dd id="markup-traffic">0/min</dd></div>
+          <div><dt>Come in</dt><dd id="markup-interest">0%</dd></div>
+          <div><dt>Basket</dt><dd id="markup-basket">1 sock</dd></div>
+          <div><dt>Expected sales</dt><dd id="markup-demand">0/s</dd></div>
+        </dl>
+        <button type="button" class="brut secondary" id="btn-clearance">Clearance sale</button>
+        <p class="hint" id="clearance-hint">Dump all shop stock at 25% of base price.</p>
+      </section>
+
+      <section class="drawer-section" data-section="bank">
+        <h2>Bank</h2>
+        <p class="blurb">Borrow now, pay later. Every lender has a due date and strong feelings about missing it. Borrowed money does not count as earnings.</p>
+        <div class="item-list" id="list-lenders"></div>
+        <p class="empty" id="empty-lenders" hidden>Nobody will lend to you yet.</p>
+      </section>
+
+      <section class="drawer-section" data-section="retire">
+        <h2>Retirement</h2>
+        <div class="prestige-card">
+          <p>Retire and hand the business to your kids. You keep <strong>Heirloom Threads</strong>, each worth +10% production, +10% sock prices, +10% research speed and faster hand-knitting, forever.</p>
+          <p>Threads held: <strong id="prestige-held">0</strong> · Retire now for <strong id="prestige-pending">+0</strong></p>
+          <p class="hint" id="prestige-hint"></p>
+          <button type="button" class="brut secondary" id="btn-retire" disabled>Retire</button>
+        </div>
+      </section>
+
+      <section class="drawer-section" data-section="save">
+        <h2>Save &amp; stats</h2>
+        <div class="save-row">
+          <button type="button" class="brut secondary" id="btn-save">Save now</button>
+          <button type="button" class="brut danger" id="btn-reset">Hard reset</button>
+        </div>
+        <p class="hint" id="save-status">Autosaves every 15 seconds.</p>
+        <h3>Lifetime stats</h3>
+        <dl class="rates">
+          <div><dt>Socks knitted</dt><dd id="stat-socks">0</dd></div>
+          <div><dt>Socks delivered</dt><dd id="stat-delivered">0</dd></div>
+          <div><dt>Socks sold</dt><dd id="stat-sold">0</dd></div>
+          <div><dt>Money earned</dt><dd id="stat-money">$0</dd></div>
+          <div><dt>Hand-knit socks</dt><dd id="stat-clicks">0</dd></div>
+          <div><dt>Time played</dt><dd id="stat-time">0s</dd></div>
+          <div><dt>Retirements</dt><dd id="stat-retire">0</dd></div>
+          <div><dt>Bankruptcies</dt><dd id="stat-bankrupt">0</dd></div>
+        </dl>
+      </section>
+
+      <section class="drawer-section" data-section="scenarios">
+        <h2>Test saves</h2>
+        <p class="blurb">Jump to a point in the game to see how it plays from there. Loading one replaces your current game. Any test save can also be opened directly with <code>?scenario=id</code> in the address bar.</p>
+        <div class="item-list" id="list-scenarios"></div>
+      </section>
+    </div>
+  </aside>
+
+  <aside class="radio brut" id="radio" aria-label="Sock Radio">
+    <div class="radio-head">
+      <span>📻 SOCK RADIO</span>
+      <button type="button" class="radio-min" id="radio-min" aria-label="Minimise radio">▾</button>
+    </div>
+    <div class="radio-body" id="radio-body">
+      <div class="radio-screen">
+        <div class="radio-title" id="radio-title">Cottage Chiptune</div>
+        <div class="radio-tag" id="radio-tag">Eight bits and a ball of yarn</div>
+        <div class="radio-layers" id="radio-layers"></div>
+      </div>
+      <div class="radio-controls">
+        <button type="button" class="brut radio-btn" id="radio-prev" aria-label="Previous track">⏮</button>
+        <button type="button" class="brut radio-btn radio-play" id="radio-play" aria-label="Play or pause">▶</button>
+        <button type="button" class="brut radio-btn" id="radio-next" aria-label="Next track">⏭</button>
+        <input type="range" id="radio-vol" min="0" max="100" step="5" value="50" aria-label="Volume">
+      </div>
+    </div>
+  </aside>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="floaters"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/scenarios.js"></script>
+  <script src="js/format.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/factory.js"></script>
+  <script src="js/street.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
